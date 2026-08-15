@@ -37,7 +37,7 @@ body {
   border: 0; background: transparent; padding: 6px 14px; border-radius: 999px;
   font: inherit; cursor: pointer; color: var(--muted);
 }
-.modes button.active { background: var(--surface); color: var(--text); font-weight: 600; box-shadow: 0 0 0 1px var(--border); }
+.modes button.active { background: var(--accent); color: #fff; font-weight: 600; }
 .ribbon label { font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
 select, input, textarea {
   font: inherit; color: var(--text); background: var(--surface);
