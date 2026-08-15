@@ -8,7 +8,7 @@ from dataclasses import dataclass, asdict
 from typing import Any
 
 SUPPORTED_EXTENSIONS = {
-    ".pdf", ".xlsx", ".xls", ".csv", ".png", ".jpg", ".jpeg",
+    ".pdf", ".xlsx", ".xls", ".docx", ".csv", ".png", ".jpg", ".jpeg",
     ".gif", ".webp", ".txt", ".md", ".json", ".zip", ".mp4",
 }
 
@@ -16,6 +16,7 @@ MIME_BY_EXT = {
     ".pdf": "application/pdf",
     ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     ".xls": "application/vnd.ms-excel",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     ".csv": "text/csv",
     ".png": "image/png",
     ".jpg": "image/jpeg",

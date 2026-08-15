@@ -344,7 +344,15 @@ async function sendMessage(ev) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
-    if (!res.ok || !res.body) throw new Error("Failed to send");
+    if (!res.ok) {
+      let msg = res.statusText || "Failed to send";
+      try {
+        const data = await res.json();
+        msg = data.detail || msg;
+      } catch {}
+      throw new Error(typeof msg === "string" ? msg : JSON.stringify(msg));
+    }
+    if (!res.body) throw new Error("Failed to send");
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let leftover = "";
@@ -512,6 +520,31 @@ function guessMime(name, fallback = "application/octet-stream") {
       md: "text/markdown",
       csv: "text/csv",
       json: "application/json",
+      py: "text/x-python",
+      js: "text/javascript",
+      ts: "text/typescript",
+      tsx: "text/tsx",
+      jsx: "text/jsx",
+      html: "text/html",
+      css: "text/css",
+      xml: "application/xml",
+      yml: "text/yaml",
+      yaml: "text/yaml",
+      toml: "text/toml",
+      ini: "text/plain",
+      log: "text/plain",
+      sh: "text/x-shellscript",
+      rs: "text/x-rust",
+      go: "text/x-go",
+      java: "text/x-java",
+      c: "text/x-c",
+      cpp: "text/x-c++",
+      h: "text/x-c",
+      rb: "text/x-ruby",
+      php: "text/x-php",
+      docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      xls: "application/vnd.ms-excel",
     }[ext] || fallback
   );
 }
