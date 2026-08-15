@@ -106,6 +106,10 @@ select, input, textarea {
 .md a { color: #111; }
 .media { margin-top: 10px; }
 .media img, .media video { max-width: min(480px, 100%); border-radius: 14px; display: block; }
+.file-chip {
+  display: inline-flex; align-items: center; gap: 6px; margin-top: 8px;
+  background: var(--user); border-radius: 999px; padding: 6px 12px; font-size: 13px;
+}
 .save {
   margin-top: 8px; border: 0; background: transparent; color: var(--muted);
   cursor: pointer; font: inherit; font-size: 13px;
@@ -116,10 +120,27 @@ select, input, textarea {
   margin: 0 8vw 22px; background: var(--surface); border: 1px solid var(--border);
   border-radius: 22px; padding: 10px 12px 10px; box-shadow: 0 8px 30px rgba(0,0,0,.04);
 }
+.composer.dragover { box-shadow: 0 0 0 2px var(--accent); }
 .composer textarea {
   width: 100%; border: 0; resize: none; outline: none; min-height: 72px; background: transparent;
 }
-.composer-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.composer-actions {
+  display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap;
+}
+.composer-tools, .composer-send { display: flex; gap: 8px; align-items: center; }
+.attach-preview { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 8px; }
+.attach-chip {
+  display: flex; align-items: center; gap: 8px; background: var(--bg);
+  border: 1px solid var(--border); border-radius: 14px; padding: 6px 8px 6px 6px; font-size: 12px;
+}
+.attach-chip img {
+  width: 36px; height: 36px; object-fit: cover; border-radius: 8px; display: block;
+}
+.attach-chip .name { max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.attach-chip .remove {
+  border: 0; background: transparent; color: var(--muted); cursor: pointer; font: inherit; padding: 0 4px;
+}
+.btn.toggle.active { background: var(--accent); color: #fff; border-color: var(--accent); }
 
 .btn {
   border: 0; border-radius: 999px; padding: 8px 14px; font: inherit; cursor: pointer;

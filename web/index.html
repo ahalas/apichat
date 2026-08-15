@@ -54,10 +54,18 @@
       <p id="status" class="status" hidden></p>
       <p id="error" class="error" hidden></p>
       <form id="composer" class="composer">
+        <div id="attachPreview" class="attach-preview" hidden></div>
         <textarea id="input" rows="3" placeholder="Message…"></textarea>
         <div class="composer-actions">
-          <button type="button" class="btn ghost" id="stopBtn" disabled>Stop</button>
-          <button type="submit" class="btn primary" id="sendBtn">Send</button>
+          <div class="composer-tools">
+            <input id="fileInput" type="file" multiple hidden accept="image/*,.pdf,.txt,.md,.csv,.json,.py,.js,.ts,.html,.css,.xml,.yml,.yaml" />
+            <button type="button" class="btn ghost" id="attachBtn" title="Attach files">Attach</button>
+            <button type="button" class="btn ghost toggle" id="webSearchBtn" title="Search the web">Web search</button>
+          </div>
+          <div class="composer-send">
+            <button type="button" class="btn ghost" id="stopBtn" disabled>Stop</button>
+            <button type="submit" class="btn primary" id="sendBtn">Send</button>
+          </div>
         </div>
       </form>
     </main>

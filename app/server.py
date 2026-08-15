@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import sys
@@ -20,6 +21,7 @@ from app.files.detector import attachments_from_json, attachments_to_json, detec
 from app.files.export import export_pdf, export_text
 from app.files.saver import save_all_attachments
 from app.providers.base import ModelInfo, parse_api_error
+from app.providers.messages import MAX_ATTACHMENT_BYTES, MAX_ATTACHMENTS
 from app.providers.openrouter import OpenRouterClient
 from app.providers.xai import XAIClient
 
@@ -40,14 +42,22 @@ class NewConversation(BaseModel):
     effort: str = "medium"
 
 
+class AttachmentIn(BaseModel):
+    filename: str = "file"
+    mime: str = "application/octet-stream"
+    data_base64: str = ""
+
+
 class SendPayload(BaseModel):
     conversation_id: str | None = None
-    text: str
+    text: str = ""
     provider: str = "xAI"
     model: str
     mode: str = "Chat"
     effort: str | None = None
     duration: int = 8
+    attachments: list[AttachmentIn] = Field(default_factory=list)
+    web_search: bool = False
 
 
 class SavePayload(BaseModel):
@@ -184,10 +194,11 @@ def create_app() -> FastAPI:
     @app.post("/api/send")
     def send(payload: SendPayload) -> StreamingResponse:
         text = payload.text.strip()
-        if not text:
+        attachments = _normalize_attachments(payload.attachments)
+        if not text and not attachments:
             raise HTTPException(400, "Empty message")
         return StreamingResponse(
-            _send_events(payload),
+            _send_events(payload, attachments),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
@@ -252,7 +263,148 @@ def _sse(payload: dict[str, Any]) -> str:
     return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
 
-def _send_events(payload: SendPayload):
+def _send_events(payload: SendPayload, user_attachments: list[dict[str, Any]]):
+    cfg = load_config()
+    provider = payload.provider
+    mode = payload.mode
+    text = payload.text.strip()
+    web_search = bool(payload.web_search) and mode == "Chat"
+    if mode in {"Image", "Video"}:
+        provider = "xAI"
+        user_attachments = []
+        web_search = False
+    if provider == "xAI" and not cfg.xai_api_key:
+        yield _sse({"type": "error", "message": "Add your xAI API key in Settings."})
+        return
+    if provider == "OpenRouter" and not cfg.openrouter_api_key:
+        yield _sse({"type": "error", "message": "Add your OpenRouter API key in Settings."})
+        return
+    if not payload.model:
+        yield _sse({"type": "error", "message": "Select a model."})
+        return
+
+    conv_id = payload.conversation_id
+    if not conv_id:
+        conv = db.create_conversation(provider=provider, model=payload.model, effort=payload.effort or "medium")
+        conv_id = conv.id
+    conv = db.get_conversation(conv_id)
+    if not conv:
+        yield _sse({"type": "error", "message": "Conversation not found."})
+        return
+
+    title = conv.title
+    if title == "New chat":
+        seed = text or (user_attachments[0]["filename"] if user_attachments else "New chat")
+        title = seed[:48] + ("…" if len(seed) > 48 else "")
+        db.update_conversation(conv_id, title=title)
+    db.update_conversation(conv_id, provider=provider, model=payload.model, effort=payload.effort or conv.effort)
+    db.add_message(conv_id, "user", text, user_attachments)
+    assistant = db.add_message(conv_id, "assistant", "")
+    yield _sse(
+        {
+            "type": "meta",
+            "conversation_id": conv_id,
+            "title": title,
+            "message_id": assistant.id,
+        }
+    )
+
+    _stop_flags[conv_id] = False
+    effort = payload.effort if payload.effort not in {None, "—", "-"} else None
+    content = ""
+    attachments: list[dict[str, Any]] = []
+    status_queue: list[str] = []
+
+    def on_status(message: str) -> None:
+        status_queue.append(message)
+
+    try:
+        if mode == "Image":
+            att = XAIClient(cfg.xai_api_key).generate_image(text, payload.model)
+            attachments = attachments_to_json([att])
+            content = "Image generated."
+            db.update_message_content(assistant.id, content, attachments)
+            yield _sse({"type": "media", "content": content, "attachments": attachments})
+            yield _sse({"type": "done", "conversation_id": conv_id})
+            return
+        if mode == "Video":
+            class Flag:
+                def is_set(self_inner) -> bool:
+                    return bool(_stop_flags.get(conv_id))
+
+            att = XAIClient(cfg.xai_api_key).generate_video(
+                text, payload.model, duration=payload.duration, stop_event=Flag()
+            )
+            attachments = attachments_to_json([att])
+            content = "Video generated."
+            db.update_message_content(assistant.id, content, attachments)
+            yield _sse({"type": "media", "content": content, "attachments": attachments})
+            yield _sse({"type": "done", "conversation_id": conv_id})
+            return
+
+        history = [
+            {"role": m.role, "content": m.content, "attachments": m.attachments}
+            for m in db.list_messages(conv_id)
+            if m.id != assistant.id
+        ]
+        if provider == "xAI":
+            stream = XAIClient(cfg.xai_api_key).stream_chat(
+                payload.model, history, effort=effort, web_search=web_search, on_status=on_status
+            )
+        else:
+            models = {m.id: m for m in _list_models(cfg, "OpenRouter")}
+            info = models.get(payload.model)
+            stream = OpenRouterClient(cfg.openrouter_api_key).stream_chat(
+                payload.model,
+                history,
+                effort=effort,
+                supports_reasoning=bool(info and info.supports_reasoning),
+                web_search=web_search,
+                on_status=on_status,
+            )
+        for token in stream:
+            while status_queue:
+                yield _sse({"type": "status", "text": status_queue.pop(0)})
+            if _stop_flags.get(conv_id):
+                break
+            if not token:
+                continue
+            content += token
+            yield _sse({"type": "token", "text": token})
+        while status_queue:
+            yield _sse({"type": "status", "text": status_queue.pop(0)})
+        detected = detect_attachments(content)
+        attachments = attachments_to_json(detected)
+        db.update_message_content(assistant.id, content, attachments)
+        yield _sse({"type": "done", "conversation_id": conv_id, "attachments": attachments})
+    except Exception as exc:
+        message = parse_api_error(exc)
+        if not content:
+            content = ""
+        db.update_message_content(assistant.id, content or message, attachments)
+        yield _sse({"type": "error", "message": message})
+
+
+def _normalize_attachments(items: list[AttachmentIn]) -> list[dict[str, Any]]:
+    if not items:
+        return []
+    if len(items) > MAX_ATTACHMENTS:
+        raise HTTPException(400, f"Too many attachments (max {MAX_ATTACHMENTS}).")
+    out: list[dict[str, Any]] = []
+    for item in items:
+        filename = (item.filename or "file").strip() or "file"
+        mime = (item.mime or "application/octet-stream").strip() or "application/octet-stream"
+        raw = "".join((item.data_base64 or "").split())
+        if not raw:
+            continue
+        try:
+            data = base64.b64decode(raw, validate=False)
+        except Exception as exc:
+            raise HTTPException(400, f"Invalid attachment: {filename}") from exc
+        if len(data) > MAX_ATTACHMENT_BYTES:
+            raise HTTPException(400, f"{filename} is larger than 20 MB.")
+        out.append({"filename": filename, "mime": mime, "data_base64": raw})
+    return out
     cfg = load_config()
     provider = payload.provider
     mode = payload.mode
