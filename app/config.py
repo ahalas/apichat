@@ -8,9 +8,21 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 
-APP_DIR = Path(os.environ.get("APPDATA", Path.home())) / "AgentChat"
+def _app_dir() -> Path:
+    root = Path(os.environ.get("APPDATA", Path.home()))
+    current = root / "Apichat"
+    legacy = root / "AgentChat"
+    if legacy.exists() and not current.exists():
+        try:
+            legacy.rename(current)
+        except OSError:
+            return legacy
+    return current
+
+
+APP_DIR = _app_dir()
 CONFIG_PATH = APP_DIR / "config.json"
-DEFAULT_OUTPUT_FOLDER = Path.home() / "Documents" / "AgentChat" / "outputs"
+DEFAULT_OUTPUT_FOLDER = Path.home() / "Documents" / "Apichat" / "outputs"
 
 
 @dataclass

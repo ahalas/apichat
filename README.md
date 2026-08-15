@@ -6,6 +6,8 @@ A desktop chat app for **xAI** and **OpenRouter**, using your own API keys. The 
 
 - Streaming chat with markdown replies
 - Image and video generation (xAI Imagine)
+- File attachments and web search
+- Word/Excel converted to text or CSV on send
 - Model and reasoning effort selection
 - Local chat history
 - Settings for API keys, hidden models, and a save folder
@@ -13,21 +15,16 @@ A desktop chat app for **xAI** and **OpenRouter**, using your own API keys. The 
 ## Setup
 
 ```powershell
-cd C:\Users\Owner\agent-chat
 pip install -r requirements.txt
 python main.py
 ```
 
-Or double-click `run.bat`.
-
-## Desktop shortcut
-
-`Apichat.exe` on the Desktop. Rebuild with `build_exe.bat`.
+On first launch, open **Settings**, add an API key, test the connection, and save.
 
 ## First run
 
-1. Click **Settings**.
+1. Click **Settings** (or **Open Settings** on the empty screen).
 2. Enter an API key, test the connection, uncheck models you do not want.
 3. Pick a save folder, then **Save**.
 
-Data lives in `%APPDATA%\AgentChat\`.
+Data lives in `%APPDATA%\Apichat\` (existing `%APPDATA%\AgentChat\` data is reused).
