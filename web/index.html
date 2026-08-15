@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Apichat</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header class="ribbon">
+    <div class="brand">Apichat</div>
+    <div class="modes" id="modes">
+      <button data-mode="Chat" class="active">Chat</button>
+      <button data-mode="Image">Image</button>
+      <button data-mode="Video">Video</button>
+    </div>
+    <label>Provider
+      <select id="provider">
+        <option>xAI</option>
+        <option>OpenRouter</option>
+      </select>
+    </label>
+    <label>Model
+      <select id="model"></select>
+    </label>
+    <label id="effortWrap">Effort
+      <select id="effort"></select>
+    </label>
+    <label id="durationWrap" hidden>Duration
+      <select id="duration">
+        <option>6</option>
+        <option selected>8</option>
+        <option>10</option>
+        <option>12</option>
+      </select>
+    </label>
+    <button class="btn primary" id="settingsBtn">Settings</button>
+  </header>
+
+  <div class="shell">
+    <aside class="sidebar">
+      <button class="btn primary full" id="newChat">New chat</button>
+      <div class="sidebar-label">Chats</div>
+      <nav id="chatList"></nav>
+    </aside>
+    <main class="main">
+      <div class="transcript">
+        <div id="emptyState" class="empty-state">
+          <div class="empty-title">Apichat</div>
+          <div class="empty-sub">Type to start</div>
+        </div>
+        <div id="messages" class="messages"></div>
+      </div>
+      <p id="status" class="status" hidden></p>
+      <p id="error" class="error" hidden></p>
+      <form id="composer" class="composer">
+        <textarea id="input" rows="3" placeholder="Message…"></textarea>
+        <div class="composer-actions">
+          <button type="button" class="btn ghost" id="stopBtn" disabled>Stop</button>
+          <button type="submit" class="btn primary" id="sendBtn">Send</button>
+        </div>
+      </form>
+    </main>
+  </div>
+
+  <div id="menu" class="menu" hidden>
+    <button id="menuDelete">Delete</button>
+  </div>
+
+  <div id="overlay" class="overlay" hidden>
+    <div class="modal">
+      <h2>Settings</h2>
+      <section>
+        <h3>API keys</h3>
+        <label>xAI API key
+          <input id="xaiKey" type="password" placeholder="Leave blank to keep existing key" />
+        </label>
+        <button type="button" class="btn ghost" id="testXai">Test xAI connection</button>
+        <p class="hint" id="xaiStatus"></p>
+        <div class="model-list" id="xaiModels"></div>
+
+        <label>OpenRouter API key
+          <input id="orKey" type="password" placeholder="Leave blank to keep existing key" />
+        </label>
+        <button type="button" class="btn ghost" id="testOr">Test OpenRouter connection</button>
+        <p class="hint" id="orStatus"></p>
+        <div class="model-list" id="orModels"></div>
+      </section>
+      <section>
+        <h3>File output</h3>
+        <label>Save folder
+          <div class="row">
+            <input id="folder" />
+            <button type="button" class="btn ghost" id="browseFolder">Browse</button>
+          </div>
+        </label>
+        <button type="button" class="btn ghost" id="openFolder">Open folder</button>
+      </section>
+      <div class="modal-actions">
+        <button type="button" class="btn ghost" id="cancelSettings">Cancel</button>
+        <button type="button" class="btn primary" id="saveSettings">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/vendor/marked.min.js"></script>
+  <script src="/vendor/purify.min.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>
