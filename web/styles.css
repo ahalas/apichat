@@ -149,6 +149,23 @@ select, input, textarea {
 .btn.ghost { background: var(--bg); color: var(--text); border: 1px solid var(--border); }
 .btn.full { width: 100%; }
 .btn:disabled { opacity: 0.45; cursor: default; }
+.btn.icon-stop {
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  color: var(--accent);
+}
+.btn.icon-stop .stop-square {
+  width: 14px;
+  height: 14px;
+  background: currentColor;
+  border-radius: 2px;
+  display: block;
+}
 
 .error { color: var(--error); padding: 0 8vw 8px; margin: 0; font-size: 13px; }
 
