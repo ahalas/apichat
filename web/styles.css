@@ -150,11 +150,11 @@ select, input, textarea {
 .btn.full { width: 100%; }
 .btn:disabled { opacity: 0.45; cursor: default; }
 .btn.icon-stop {
-  width: 28px;
-  height: 28px;
+  width: 18px;
+  height: 18px;
   padding: 0;
   background: var(--accent);
-  border-radius: 6px;
+  border-radius: 4px;
 }
 .btn.icon-stop:disabled {
   opacity: 1;
