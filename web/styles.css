@@ -159,11 +159,15 @@ select, input, textarea {
   background: transparent;
   color: var(--accent);
 }
+.btn.icon-stop:disabled {
+  opacity: 1;
+  color: var(--accent);
+}
 .btn.icon-stop .stop-square {
-  width: 14px;
-  height: 14px;
+  width: 18px;
+  height: 18px;
   background: currentColor;
-  border-radius: 2px;
+  border-radius: 3px;
   display: block;
 }
 
