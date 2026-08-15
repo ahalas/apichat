@@ -12,8 +12,6 @@ const THINKING_PHRASES = [
 
 const state = {
   conversationId: null,
-  sending: false,
-  streamId: null,
   models: [],
   menuId: null,
   disabled: { xAI: [], OpenRouter: [] },
@@ -22,11 +20,8 @@ const state = {
   pendingFiles: [],
 };
 
-let thinkingTimer = null;
-let streamTimer = null;
-let streamBuffer = "";
-let streamWrap = null;
-let streamOriginId = null;
+const streams = new Map();
+let streamSeq = 0;
 
 const $ = (id) => document.getElementById(id);
 
@@ -92,28 +87,88 @@ function showEmpty(show) {
   $("emptyState").classList.toggle("hidden", !show);
 }
 
-function viewingStream() {
-  if (!state.sending) return false;
-  if (state.streamId) return state.conversationId === state.streamId;
-  return state.conversationId === streamOriginId;
+function streamForView() {
+  for (const job of streams.values()) {
+    if (job.id && job.id === state.conversationId) return job;
+    if (!job.id && job.originId === state.conversationId) return job;
+  }
+  return null;
+}
+
+function viewingJob(job) {
+  if (!job) return false;
+  if (job.id) return state.conversationId === job.id;
+  return state.conversationId === job.originId;
+}
+
+function lastUserWrap() {
+  const nodes = [...$("messages").querySelectorAll(".msg.user")];
+  return nodes[nodes.length - 1] || null;
+}
+
+function attachThinking(job, userWrap = lastUserWrap()) {
+  stopJobThinking(job);
+  if (!userWrap) return;
+  const el = document.createElement("div");
+  el.className = "thinking";
+  userWrap.appendChild(el);
+  job.thinkingEl = el;
+  let i = Math.floor(Math.random() * THINKING_PHRASES.length);
+  const tick = () => {
+    if (job.thinkingEl) job.thinkingEl.textContent = `${THINKING_PHRASES[i % THINKING_PHRASES.length]}…`;
+    i += 1;
+  };
+  tick();
+  job.thinkingTimer = setInterval(tick, 1200);
+}
+
+function stopJobThinking(job) {
+  if (!job) return;
+  if (job.thinkingTimer) {
+    clearInterval(job.thinkingTimer);
+    job.thinkingTimer = null;
+  }
+  if (job.thinkingEl) {
+    job.thinkingEl.remove();
+    job.thinkingEl = null;
+  }
+}
+
+function setJobStatus(job, text) {
+  if (job.thinkingTimer) {
+    clearInterval(job.thinkingTimer);
+    job.thinkingTimer = null;
+  }
+  if (!job.thinkingEl && viewingJob(job)) {
+    const userWrap = lastUserWrap();
+    if (!userWrap) return;
+    job.thinkingEl = document.createElement("div");
+    job.thinkingEl.className = "thinking";
+    userWrap.appendChild(job.thinkingEl);
+  }
+  if (job.thinkingEl) job.thinkingEl.textContent = text;
 }
 
 function renderTranscript(messages) {
   $("messages").innerHTML = "";
+  const job = streamForView();
   const list = messages || [];
   const skipTail =
-    viewingStream() &&
+    job &&
     list.length &&
     list[list.length - 1].role === "assistant" &&
     !list[list.length - 1].content;
   const shown = skipTail ? list.slice(0, -1) : list;
-  showEmpty(!shown.length && !viewingStream());
+  showEmpty(!shown.length && !job);
   for (const msg of shown) {
     addMessage(msg.role, msg.content, msg.attachments || []);
   }
-  if (viewingStream()) {
-    streamWrap = addMessage("assistant", streamBuffer, [], { streaming: true });
-    if (streamBuffer) updateStreaming(streamWrap, streamBuffer);
+  if (!job) return;
+  if (job.buffer) {
+    job.wrap = addMessage("assistant", job.buffer, [], { streaming: true });
+    updateStreaming(job.wrap, job.buffer);
+  } else {
+    attachThinking(job);
   }
 }
 
@@ -122,29 +177,6 @@ function selectSidebar(id) {
     const btn = row.matches(".chat-item") ? row : row.querySelector(".chat-item");
     btn?.classList.toggle("active", btn.dataset.id === id);
   }
-}
-
-function startThinking() {
-  stopThinking();
-  const el = $("status");
-  let i = Math.floor(Math.random() * THINKING_PHRASES.length);
-  const tick = () => {
-    el.hidden = false;
-    el.textContent = `${THINKING_PHRASES[i % THINKING_PHRASES.length]}…`;
-    i += 1;
-  };
-  tick();
-  thinkingTimer = setInterval(tick, 1200);
-}
-
-function stopThinking() {
-  if (thinkingTimer) {
-    clearInterval(thinkingTimer);
-    thinkingTimer = null;
-  }
-  const el = $("status");
-  el.hidden = true;
-  el.textContent = "";
 }
 
 function attachmentHtml(atts) {
@@ -299,7 +331,6 @@ function resetWorkspace({ keepId = false } = {}) {
   state.pendingFiles = [];
   renderPendingFiles();
   $("messages").innerHTML = "";
-  streamWrap = null;
   showEmpty(true);
   setError("");
   updateStreamChrome();
@@ -348,7 +379,7 @@ function updateEffort() {
 
 function updateComposerReady() {
   const hasModels = state.models.length > 0;
-  $("sendBtn").disabled = !hasModels || state.sending;
+  $("sendBtn").disabled = !hasModels || Boolean(streamForView());
   $("input").placeholder = hasModels ? "Message…" : "Add an API key in Settings…";
   const emptySub = $("emptySub");
   const emptySettings = $("emptySettings");
@@ -363,18 +394,7 @@ function updateComposerReady() {
 }
 
 function updateStreamChrome() {
-  $("stopBtn").hidden = !state.sending;
-  if (viewingStream()) {
-    if (!streamBuffer && state.sending && !thinkingTimer) startThinking();
-  } else if (thinkingTimer || !$("status").hidden) {
-    const el = $("status");
-    el.hidden = true;
-    el.textContent = "";
-    if (thinkingTimer) {
-      clearInterval(thinkingTimer);
-      thinkingTimer = null;
-    }
-  }
+  $("stopBtn").hidden = !streamForView();
   updateComposerReady();
 }
 
@@ -386,20 +406,21 @@ function applyEffort(value) {
   }
 }
 
-function paintStream() {
-  if (!viewingStream() || !streamWrap?.isConnected) return;
-  updateStreaming(streamWrap, streamBuffer);
+function paintJob(job) {
+  if (!viewingJob(job) || !job.wrap?.isConnected) return;
+  updateStreaming(job.wrap, job.buffer);
 }
 
-function finishStreamView(content, attachments = []) {
-  if (streamWrap?.isConnected) streamWrap.remove();
-  streamWrap = null;
+function finishJobView(job, content, attachments = []) {
+  stopJobThinking(job);
+  if (job.wrap?.isConnected) job.wrap.remove();
+  job.wrap = null;
   if (content || attachments.length) addMessage("assistant", content, attachments);
 }
 
 async function sendMessage(ev) {
   ev?.preventDefault();
-  if (state.sending) return;
+  if (streamForView()) return;
   const text = $("input").value.trim();
   const attachments = state.pendingFiles.slice();
   if (!text && !attachments.length) return;
@@ -407,12 +428,19 @@ async function sendMessage(ev) {
   $("input").value = "";
   state.pendingFiles = [];
   renderPendingFiles();
-  addMessage("user", text, attachments);
-  streamWrap = addMessage("assistant", "", [], { streaming: true });
-  streamOriginId = state.conversationId;
-  state.streamId = state.conversationId;
-  state.sending = true;
-  streamBuffer = "";
+  const userWrap = addMessage("user", text, attachments);
+  const job = {
+    key: `s${++streamSeq}`,
+    originId: state.conversationId,
+    id: state.conversationId,
+    buffer: "",
+    wrap: null,
+    thinkingEl: null,
+    thinkingTimer: null,
+    paintTimer: null,
+  };
+  streams.set(job.key, job);
+  attachThinking(job, userWrap);
   updateStreamChrome();
 
   const body = {
@@ -455,65 +483,54 @@ async function sendMessage(ev) {
         if (!line) continue;
         const event = JSON.parse(line.slice(6));
         if (event.type === "meta") {
-          state.streamId = event.conversation_id;
-          if (state.conversationId === streamOriginId) {
-            state.conversationId = event.conversation_id;
-            selectSidebar(event.conversation_id);
+          job.id = event.conversation_id;
+          if (state.conversationId === job.originId) {
+            state.conversationId = job.id;
+            selectSidebar(job.id);
           }
-          if (state.cache[event.conversation_id]) delete state.cache[event.conversation_id];
+          if (state.cache[job.id]) delete state.cache[job.id];
         } else if (event.type === "status") {
-          if (!viewingStream()) continue;
-          if (thinkingTimer) {
-            clearInterval(thinkingTimer);
-            thinkingTimer = null;
-          }
-          const el = $("status");
-          el.hidden = false;
-          el.textContent = event.text;
+          if (viewingJob(job)) setJobStatus(job, event.text);
         } else if (event.type === "token") {
-          if (streamBuffer === "") stopThinking();
-          streamBuffer += event.text;
-          if (!streamTimer) {
-            streamTimer = setTimeout(() => {
-              paintStream();
-              streamTimer = null;
+          if (job.buffer === "") stopJobThinking(job);
+          job.buffer += event.text;
+          if (viewingJob(job) && !job.wrap?.isConnected) {
+            job.wrap = addMessage("assistant", job.buffer, [], { streaming: true });
+          }
+          if (!job.paintTimer) {
+            job.paintTimer = setTimeout(() => {
+              paintJob(job);
+              job.paintTimer = null;
             }, 50);
           }
         } else if (event.type === "media") {
-          stopThinking();
-          if (viewingStream()) finishStreamView(event.content, event.attachments || []);
-          else if (state.streamId) delete state.cache[state.streamId];
+          if (viewingJob(job)) finishJobView(job, event.content, event.attachments || []);
+          else if (job.id) delete state.cache[job.id];
         } else if (event.type === "error") {
-          stopThinking();
-          if (viewingStream() && !streamBuffer) finishStreamView("");
-          if (viewingStream() || !state.conversationId) setError(event.message);
+          if (viewingJob(job) && !job.buffer) finishJobView(job, "");
+          if (viewingJob(job)) setError(event.message);
         } else if (event.type === "done") {
-          stopThinking();
-          if (streamTimer) {
-            clearTimeout(streamTimer);
-            streamTimer = null;
+          if (job.paintTimer) {
+            clearTimeout(job.paintTimer);
+            job.paintTimer = null;
           }
-          if (viewingStream()) {
-            if (streamBuffer) finishStreamView(streamBuffer, event.attachments || []);
-            else if (streamWrap?.isConnected) streamWrap.remove();
-          } else if (state.streamId) {
-            delete state.cache[state.streamId];
+          if (viewingJob(job)) {
+            if (job.buffer) finishJobView(job, job.buffer, event.attachments || []);
+            else finishJobView(job, "");
+          } else if (job.id) {
+            delete state.cache[job.id];
           }
           refreshChats(state.conversationId);
         }
       }
     }
   } catch (err) {
-    stopThinking();
-    if (viewingStream() && !streamBuffer) finishStreamView("");
-    if (viewingStream() || !state.conversationId) setError(err.message);
+    if (viewingJob(job) && !job.buffer) finishJobView(job, "");
+    if (viewingJob(job)) setError(err.message);
   } finally {
-    stopThinking();
-    state.sending = false;
-    state.streamId = null;
-    streamOriginId = null;
-    streamWrap = null;
-    streamBuffer = "";
+    if (job.paintTimer) clearTimeout(job.paintTimer);
+    stopJobThinking(job);
+    streams.delete(job.key);
     updateStreamChrome();
   }
 }
@@ -764,9 +781,9 @@ function bind() {
     }
   });
   $("stopBtn").onclick = () => {
-    const id = state.streamId || state.conversationId;
+    const job = streamForView();
+    const id = job?.id || job?.originId;
     if (id) api(`/api/stop/${id}`, { method: "POST" });
-    if (viewingStream()) stopThinking();
   };
   $("emptySettings").onclick = openSettings;
   $("settingsBtn").onclick = openSettings;
@@ -805,7 +822,9 @@ async function deleteChat(id) {
   }
   delete state.cache[id];
   state.menuId = null;
-  if (state.streamId === id) api(`/api/stop/${id}`, { method: "POST" });
+  for (const job of streams.values()) {
+    if (job.id === id || job.originId === id) api(`/api/stop/${id}`, { method: "POST" });
+  }
   const wasCurrent = state.conversationId === id;
   if (wasCurrent) state.conversationId = null;
   await refreshChats();
