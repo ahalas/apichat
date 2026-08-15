@@ -191,9 +191,13 @@ function paintChats(conversations, selectId = state.conversationId) {
     btn.className = "chat-item" + (conv.id === selectId ? " active" : "");
     btn.dataset.id = conv.id;
     btn.innerHTML = `<span class="title">${escapeHtml(conv.title)}</span><span class="date">${formatDate(conv.updated_at)}</span>`;
-    btn.onclick = () => loadConversation(conv.id);
+    btn.onclick = (e) => {
+      if (e.button && e.button !== 0) return;
+      loadConversation(conv.id);
+    };
     btn.oncontextmenu = (e) => {
       e.preventDefault();
+      e.stopPropagation();
       state.menuId = conv.id;
       const menu = $("menu");
       menu.hidden = false;
@@ -251,13 +255,18 @@ async function newChat() {
   });
   state.conversationId = conv.id;
   state.cache[conv.id] = { conversation: conv, messages: [] };
+  resetWorkspace({ keepId: true });
+  refreshChats(conv.id);
+}
+
+function resetWorkspace({ keepId = false } = {}) {
+  if (!keepId) state.conversationId = null;
   state.pendingFiles = [];
   renderPendingFiles();
   $("messages").innerHTML = "";
   showEmpty(true);
   setError("");
   stopThinking();
-  refreshChats(conv.id);
 }
 
 async function refreshModels() {
@@ -642,16 +651,32 @@ function bind() {
       if (path) $("folder").value = path;
     }
   };
-  $("menuDelete").onclick = async () => {
+  $("menuDelete").onclick = async (e) => {
+    e.stopPropagation();
     $("menu").hidden = true;
-    if (!state.menuId) return;
+    const id = state.menuId;
+    if (!id) return;
     if (!confirm("Delete this chat?")) return;
-    await api(`/api/conversations/${state.menuId}`, { method: "DELETE" });
-    delete state.cache[state.menuId];
-    if (state.conversationId === state.menuId) await newChat();
-    else refreshChats();
+    try {
+      await api(`/api/conversations/${id}`, { method: "DELETE" });
+    } catch (err) {
+      setError(err.message);
+      return;
+    }
+    delete state.cache[id];
+    state.menuId = null;
+    const wasCurrent = state.conversationId === id;
+    if (wasCurrent) state.conversationId = null;
+    await refreshChats();
+    if (!wasCurrent) return;
+    if (state.chats.length) await loadConversation(state.chats[0].id);
+    else resetWorkspace();
   };
-  document.addEventListener("click", () => ($("menu").hidden = true));
+  $("menu").addEventListener("click", (e) => e.stopPropagation());
+  document.addEventListener("click", (e) => {
+    if (e.target.closest("#menu")) return;
+    $("menu").hidden = true;
+  });
 }
 
 async function init() {
@@ -661,7 +686,7 @@ async function init() {
   const data = await api("/api/conversations");
   paintChats(data.conversations);
   if (data.conversations.length) await loadConversation(data.conversations[0].id);
-  else await newChat();
+  else resetWorkspace();
 }
 
 init().catch((err) => setError(err.message));
