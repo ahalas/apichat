@@ -14,7 +14,7 @@
       <button data-mode="Image">Image</button>
       <button data-mode="Video">Video</button>
     </div>
-    <label>Provider
+    <label id="providerWrap">Provider
       <select id="provider">
         <option>xAI</option>
         <option>OpenRouter</option>
@@ -47,7 +47,8 @@
       <div class="transcript">
         <div id="emptyState" class="empty-state">
           <div class="empty-title">Apichat</div>
-          <div class="empty-sub">Type to start</div>
+          <div class="empty-sub" id="emptySub">Type to start</div>
+          <button type="button" class="btn primary" id="emptySettings" hidden>Open Settings</button>
         </div>
         <div id="messages" class="messages"></div>
       </div>
@@ -58,13 +59,13 @@
         <textarea id="input" rows="3" placeholder="Message…"></textarea>
         <div class="composer-actions">
           <div class="composer-tools">
-            <input id="fileInput" type="file" multiple hidden accept="image/*,.pdf,.txt,.md,.csv,.json,.py,.js,.ts,.html,.css,.xml,.yml,.yaml" />
+            <input id="fileInput" type="file" multiple hidden accept="image/*,.pdf,.txt,.md,.csv,.json,.py,.js,.ts,.tsx,.jsx,.html,.css,.xml,.yml,.yaml,.toml,.ini,.log,.sh,.rs,.go,.java,.c,.cpp,.h,.rb,.php,.docx,.xlsx,.xls" />
             <button type="button" class="btn ghost" id="attachBtn" title="Attach files">Attach</button>
             <button type="button" class="btn ghost toggle" id="webSearchBtn" title="Search the web">Web search</button>
           </div>
           <div class="composer-send">
-            <button type="button" class="btn ghost" id="stopBtn" disabled>Stop</button>
-            <button type="submit" class="btn primary" id="sendBtn">Send</button>
+            <button type="button" class="btn icon-stop" id="stopBtn" hidden title="Stop" aria-label="Stop"></button>
+            <button type="submit" class="btn primary" id="sendBtn" disabled>Send</button>
           </div>
         </div>
       </form>

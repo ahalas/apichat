@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import subprocess
 import sys
 from dataclasses import asdict
 from pathlib import Path
@@ -17,6 +18,7 @@ from pydantic import BaseModel, Field
 
 from app.config import DEFAULT_OUTPUT_FOLDER, load_config, merge_config, save_config
 from app.database import Database
+from app.files.convert import ConversionError, convert_office_attachments
 from app.files.detector import attachments_from_json, attachments_to_json, detect_attachments
 from app.files.export import export_pdf, export_text
 from app.files.saver import save_all_attachments
@@ -224,13 +226,13 @@ def create_app() -> FastAPI:
             raise HTTPException(400, str(exc)) from exc
         saved = [str(p) for p in paths]
         if payload.open_after and paths:
-            os.startfile(str(paths[0]))
+            _open_path(str(paths[0]))
         return {"paths": saved, "folder": str(folder)}
 
     @app.post("/api/open-folder")
     def open_folder() -> dict[str, str]:
         folder = load_config().get_output_folder()
-        os.startfile(str(folder))
+        _open_path(str(folder))
         return {"folder": str(folder)}
 
     static = web_dir()
@@ -404,102 +406,18 @@ def _normalize_attachments(items: list[AttachmentIn]) -> list[dict[str, Any]]:
         if len(data) > MAX_ATTACHMENT_BYTES:
             raise HTTPException(400, f"{filename} is larger than 20 MB.")
         out.append({"filename": filename, "mime": mime, "data_base64": raw})
-    return out
-    cfg = load_config()
-    provider = payload.provider
-    mode = payload.mode
-    if mode in {"Image", "Video"}:
-        provider = "xAI"
-    if provider == "xAI" and not cfg.xai_api_key:
-        yield _sse({"type": "error", "message": "Add your xAI API key in Settings."})
-        return
-    if provider == "OpenRouter" and not cfg.openrouter_api_key:
-        yield _sse({"type": "error", "message": "Add your OpenRouter API key in Settings."})
-        return
-    if not payload.model:
-        yield _sse({"type": "error", "message": "Select a model."})
-        return
-
-    conv_id = payload.conversation_id
-    if not conv_id:
-        conv = db.create_conversation(provider=provider, model=payload.model, effort=payload.effort or "medium")
-        conv_id = conv.id
-    conv = db.get_conversation(conv_id)
-    if not conv:
-        yield _sse({"type": "error", "message": "Conversation not found."})
-        return
-
-    title = conv.title
-    if title == "New chat":
-        title = payload.text[:48] + ("…" if len(payload.text) > 48 else "")
-        db.update_conversation(conv_id, title=title)
-    db.update_conversation(conv_id, provider=provider, model=payload.model, effort=payload.effort or conv.effort)
-    db.add_message(conv_id, "user", payload.text)
-    assistant = db.add_message(conv_id, "assistant", "")
-    yield _sse(
-        {
-            "type": "meta",
-            "conversation_id": conv_id,
-            "title": title,
-            "message_id": assistant.id,
-        }
-    )
-
-    _stop_flags[conv_id] = False
-    effort = payload.effort if payload.effort not in {None, "—", "-"} else None
-    content = ""
-    attachments: list[dict[str, Any]] = []
     try:
-        if mode == "Image":
-            att = XAIClient(cfg.xai_api_key).generate_image(payload.text, payload.model)
-            attachments = attachments_to_json([att])
-            content = "Image generated."
-            db.update_message_content(assistant.id, content, attachments)
-            yield _sse({"type": "media", "content": content, "attachments": attachments})
-            yield _sse({"type": "done", "conversation_id": conv_id})
-            return
-        if mode == "Video":
-            class Flag:
-                def is_set(self_inner) -> bool:
-                    return bool(_stop_flags.get(conv_id))
+        return convert_office_attachments(out)
+    except ConversionError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
-            att = XAIClient(cfg.xai_api_key).generate_video(
-                payload.text, payload.model, duration=payload.duration, stop_event=Flag()
-            )
-            attachments = attachments_to_json([att])
-            content = "Video generated."
-            db.update_message_content(assistant.id, content, attachments)
-            yield _sse({"type": "media", "content": content, "attachments": attachments})
-            yield _sse({"type": "done", "conversation_id": conv_id})
-            return
 
-        history = [{"role": m.role, "content": m.content} for m in db.list_messages(conv_id)]
-        if provider == "xAI":
-            stream = XAIClient(cfg.xai_api_key).stream_chat(payload.model, history, effort=effort)
-        else:
-            models = {m.id: m for m in _list_models(cfg, "OpenRouter")}
-            info = models.get(payload.model)
-            stream = OpenRouterClient(cfg.openrouter_api_key).stream_chat(
-                payload.model,
-                history,
-                effort=effort,
-                supports_reasoning=bool(info and info.supports_reasoning),
-            )
-        for token in stream:
-            if _stop_flags.get(conv_id):
-                break
-            content += token
-            yield _sse({"type": "token", "text": token})
-        detected = detect_attachments(content)
-        attachments = attachments_to_json(detected)
-        db.update_message_content(assistant.id, content, attachments)
-        yield _sse({"type": "done", "conversation_id": conv_id, "attachments": attachments})
-    except Exception as exc:
-        message = parse_api_error(exc)
-        if not content:
-            content = ""
-        db.update_message_content(assistant.id, content or message, attachments)
-        yield _sse({"type": "error", "message": message})
+def _open_path(path: str) -> None:
+    if sys.platform == "win32":
+        os.startfile(path)
+        return
+    opener = "open" if sys.platform == "darwin" else "xdg-open"
+    subprocess.Popen([opener, path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 app = create_app()

@@ -96,8 +96,9 @@ function renderTranscript(messages) {
 }
 
 function selectSidebar(id) {
-  for (const btn of $("chatList").children) {
-    btn.classList.toggle("active", btn.dataset.id === id);
+  for (const row of $("chatList").children) {
+    const btn = row.matches(".chat-item") ? row : row.querySelector(".chat-item");
+    btn?.classList.toggle("active", btn.dataset.id === id);
   }
 }
 
@@ -162,11 +163,7 @@ function addMessage(role, content, attachments = [], { streaming = false } = {})
     md.innerHTML = streaming ? escapeHtml(content) : renderMarkdown(content);
     wrap.appendChild(md);
     wrap.insertAdjacentHTML("beforeend", attachmentHtml(attachments));
-    const save = document.createElement("button");
-    save.className = "save";
-    save.textContent = attachments?.length ? "Save file" : "Save as text";
-    save.onclick = () => saveMessage(content, attachments);
-    wrap.appendChild(save);
+    if (!streaming) appendSaveActions(wrap, content, attachments);
   }
   $("messages").appendChild(wrap);
   showEmpty(false);
@@ -187,20 +184,39 @@ function paintChats(conversations, selectId = state.conversationId) {
   const nav = $("chatList");
   nav.innerHTML = "";
   for (const conv of state.chats) {
+    const row = document.createElement("div");
+    row.className = "chat-row";
     const btn = document.createElement("button");
     btn.className = "chat-item" + (conv.id === selectId ? " active" : "");
     btn.dataset.id = conv.id;
     btn.innerHTML = `<span class="title">${escapeHtml(conv.title)}</span><span class="date">${formatDate(conv.updated_at)}</span>`;
-    btn.onclick = () => loadConversation(conv.id);
+    btn.onclick = (e) => {
+      if (e.button && e.button !== 0) return;
+      loadConversation(conv.id);
+    };
     btn.oncontextmenu = (e) => {
       e.preventDefault();
+      e.stopPropagation();
       state.menuId = conv.id;
       const menu = $("menu");
       menu.hidden = false;
       menu.style.left = `${e.clientX}px`;
       menu.style.top = `${e.clientY}px`;
     };
-    nav.appendChild(btn);
+    const del = document.createElement("button");
+    del.type = "button";
+    del.className = "chat-delete";
+    del.title = "Delete";
+    del.setAttribute("aria-label", "Delete chat");
+    del.textContent = "×";
+    del.onclick = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      deleteChat(conv.id);
+    };
+    row.appendChild(btn);
+    row.appendChild(del);
+    nav.appendChild(row);
   }
 }
 
@@ -251,13 +267,19 @@ async function newChat() {
   });
   state.conversationId = conv.id;
   state.cache[conv.id] = { conversation: conv, messages: [] };
+  resetWorkspace({ keepId: true });
+  refreshChats(conv.id);
+}
+
+function resetWorkspace({ keepId = false } = {}) {
+  if (!keepId) state.conversationId = null;
   state.pendingFiles = [];
   renderPendingFiles();
   $("messages").innerHTML = "";
   showEmpty(true);
   setError("");
   stopThinking();
-  refreshChats(conv.id);
+  updateComposerReady();
 }
 
 async function refreshModels() {
@@ -270,10 +292,12 @@ async function refreshModels() {
   select.innerHTML = state.models.map((m) => `<option value="${escapeHtml(m.id)}">${escapeHtml(m.id)}</option>`).join("");
   if (state.models.some((m) => m.id === prev)) select.value = prev;
   updateEffort();
+  updateComposerReady();
 }
 
 function updateEffort() {
   const mode = currentMode();
+  $("providerWrap").hidden = mode !== "Chat";
   $("effortWrap").hidden = mode !== "Chat";
   $("durationWrap").hidden = mode !== "Video";
   const chatTools = mode === "Chat";
@@ -286,14 +310,32 @@ function updateEffort() {
   }
   const info = state.models.find((m) => m.id === $("model").value);
   const effort = $("effort");
+  const prev = effort.value;
   if (info?.supports_reasoning && info.reasoning_efforts?.length) {
     effort.disabled = false;
     effort.innerHTML = info.reasoning_efforts.map((e) => `<option>${e}</option>`).join("");
-    if (![...effort.options].some((o) => o.value === "high")) effort.value = info.reasoning_efforts[0];
-    else effort.value = "high";
+    if (prev && [...effort.options].some((o) => o.value === prev)) effort.value = prev;
+    else if ([...effort.options].some((o) => o.value === "high")) effort.value = "high";
+    else effort.value = info.reasoning_efforts[0];
   } else {
     effort.innerHTML = `<option>—</option>`;
     effort.disabled = true;
+  }
+}
+
+function updateComposerReady() {
+  const hasModels = state.models.length > 0;
+  $("sendBtn").disabled = !hasModels || state.sending;
+  $("input").placeholder = hasModels ? "Message…" : "Add an API key in Settings…";
+  const emptySub = $("emptySub");
+  const emptySettings = $("emptySettings");
+  if (!emptySub || !emptySettings) return;
+  if (!hasModels) {
+    emptySub.textContent = "Open Settings to add an API key and choose a model";
+    emptySettings.hidden = false;
+  } else {
+    emptySub.textContent = "Type to start";
+    emptySettings.hidden = true;
   }
 }
 
@@ -321,8 +363,8 @@ async function sendMessage(ev) {
   addMessage("user", text, attachments);
   const wrap = addMessage("assistant", "", [], { streaming: true });
   state.sending = true;
-  $("sendBtn").disabled = true;
-  $("stopBtn").disabled = false;
+  $("stopBtn").hidden = false;
+  updateComposerReady();
   streamBuffer = "";
   startThinking();
 
@@ -344,7 +386,14 @@ async function sendMessage(ev) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
-    if (!res.ok || !res.body) throw new Error("Failed to send");
+    if (!res.ok || !res.body) {
+      let msg = "Failed to send";
+      try {
+        const data = await res.json();
+        msg = data.detail || data.message || msg;
+      } catch {}
+      throw new Error(typeof msg === "string" ? msg : JSON.stringify(msg));
+    }
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let leftover = "";
@@ -383,6 +432,7 @@ async function sendMessage(ev) {
           addMessage("assistant", event.content, event.attachments || []);
         } else if (event.type === "error") {
           stopThinking();
+          if (!streamBuffer) wrap.remove();
           setError(event.message);
         } else if (event.type === "done") {
           stopThinking();
@@ -400,16 +450,43 @@ async function sendMessage(ev) {
     }
   } catch (err) {
     stopThinking();
+    if (!streamBuffer) wrap.remove();
     setError(err.message);
   } finally {
     stopThinking();
     state.sending = false;
-    $("sendBtn").disabled = false;
-    $("stopBtn").disabled = true;
+    $("stopBtn").hidden = true;
+    updateComposerReady();
   }
 }
 
-async function saveMessage(content, attachments) {
+function appendSaveActions(wrap, content, attachments = []) {
+  const actions = document.createElement("div");
+  actions.className = "save-actions";
+  if (attachments?.length) {
+    const save = document.createElement("button");
+    save.className = "save";
+    save.textContent = "Save file";
+    save.onclick = () => saveMessage(content, attachments);
+    actions.appendChild(save);
+  } else if (content) {
+    const txt = document.createElement("button");
+    txt.className = "save";
+    txt.textContent = "Save as text";
+    txt.onclick = () => saveMessage(content, [], "txt");
+    const pdf = document.createElement("button");
+    pdf.className = "save";
+    pdf.textContent = "Save as PDF";
+    pdf.onclick = () => saveMessage(content, [], "pdf");
+    actions.appendChild(txt);
+    actions.appendChild(pdf);
+  } else {
+    return;
+  }
+  wrap.appendChild(actions);
+}
+
+async function saveMessage(content, attachments, format = "txt") {
   try {
     if (attachments?.length) {
       await api("/api/save", {
@@ -421,7 +498,6 @@ async function saveMessage(content, attachments) {
       });
       return;
     }
-    const format = confirm("Save as PDF?\nOK = PDF, Cancel = text") ? "pdf" : "txt";
     await api("/api/save", {
       method: "POST",
       body: JSON.stringify({ content, title: "chat", format, attachments: [] }),
@@ -512,6 +588,9 @@ function guessMime(name, fallback = "application/octet-stream") {
       md: "text/markdown",
       csv: "text/csv",
       json: "application/json",
+      docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      xls: "application/vnd.ms-excel",
     }[ext] || fallback
   );
 }
@@ -630,6 +709,7 @@ function bind() {
     stopThinking();
     if (state.conversationId) api(`/api/stop/${state.conversationId}`, { method: "POST" });
   };
+  $("emptySettings").onclick = openSettings;
   $("settingsBtn").onclick = openSettings;
   $("cancelSettings").onclick = () => ($("overlay").hidden = true);
   $("saveSettings").onclick = saveSettings;
@@ -642,16 +722,36 @@ function bind() {
       if (path) $("folder").value = path;
     }
   };
-  $("menuDelete").onclick = async () => {
+  $("menuDelete").onclick = async (e) => {
+    e.stopPropagation();
     $("menu").hidden = true;
-    if (!state.menuId) return;
-    if (!confirm("Delete this chat?")) return;
-    await api(`/api/conversations/${state.menuId}`, { method: "DELETE" });
-    delete state.cache[state.menuId];
-    if (state.conversationId === state.menuId) await newChat();
-    else refreshChats();
+    if (state.menuId) await deleteChat(state.menuId);
   };
-  document.addEventListener("click", () => ($("menu").hidden = true));
+  $("menu").addEventListener("click", (e) => e.stopPropagation());
+  document.addEventListener("click", (e) => {
+    if (e.target.closest("#menu")) return;
+    $("menu").hidden = true;
+  });
+}
+
+async function deleteChat(id) {
+  $("menu").hidden = true;
+  if (!id) return;
+  if (!confirm("Delete this chat?")) return;
+  try {
+    await api(`/api/conversations/${id}`, { method: "DELETE" });
+  } catch (err) {
+    setError(err.message);
+    return;
+  }
+  delete state.cache[id];
+  state.menuId = null;
+  const wasCurrent = state.conversationId === id;
+  if (wasCurrent) state.conversationId = null;
+  await refreshChats();
+  if (!wasCurrent) return;
+  if (state.chats.length) await loadConversation(state.chats[0].id);
+  else resetWorkspace();
 }
 
 async function init() {
@@ -661,7 +761,7 @@ async function init() {
   const data = await api("/api/conversations");
   paintChats(data.conversations);
   if (data.conversations.length) await loadConversation(data.conversations[0].id);
-  else await newChat();
+  else resetWorkspace();
 }
 
 init().catch((err) => setError(err.message));

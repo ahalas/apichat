@@ -53,13 +53,24 @@ select, input, textarea {
 }
 .sidebar-label { font-size: 12px; color: var(--muted); margin: 14px 0 8px; }
 #chatList { overflow: auto; flex: 1; }
+.chat-row { position: relative; }
 .chat-item {
   width: 100%; text-align: left; border: 0; background: transparent;
-  padding: 10px 12px; border-radius: 12px; cursor: pointer; font: inherit;
+  padding: 10px 36px 10px 12px; border-radius: 12px; cursor: pointer; font: inherit;
 }
-.chat-item .title { display: block; font-size: 14px; }
+.chat-item .title { display: block; font-size: 14px; padding-right: 4px; }
 .chat-item .date { display: block; font-size: 12px; color: var(--muted); margin-top: 2px; }
-.chat-item:hover, .chat-item.active { background: #e4e4e7; }
+.chat-row:hover .chat-item, .chat-item.active { background: #e4e4e7; }
+.chat-delete {
+  position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
+  width: 22px; height: 22px; border: 0; border-radius: 8px;
+  background: transparent; color: var(--muted); cursor: pointer; font: inherit;
+  line-height: 1; opacity: 0;
+}
+.chat-row:hover .chat-delete, .chat-item.active + .chat-delete, .chat-delete:focus {
+  opacity: 1;
+}
+.chat-delete:hover { background: #d4d4d8; color: var(--text); }
 
 .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 .transcript { flex: 1; min-height: 0; position: relative; display: flex; flex-direction: column; }
@@ -74,6 +85,7 @@ select, input, textarea {
 .empty-state.hidden { display: none; }
 .empty-title { font-size: 28px; font-weight: 650; color: #c4c4c8; }
 .empty-sub { font-size: 16px; color: #d4d4d8; }
+.empty-state .btn { pointer-events: auto; margin-top: 10px; }
 .status {
   padding: 0 8vw 8px; margin: 0; font-size: 13px; color: var(--muted);
   min-height: 1.2em;
@@ -110,9 +122,10 @@ select, input, textarea {
   display: inline-flex; align-items: center; gap: 6px; margin-top: 8px;
   background: var(--user); border-radius: 999px; padding: 6px 12px; font-size: 13px;
 }
+.save-actions { display: flex; gap: 12px; margin-top: 8px; }
 .save {
-  margin-top: 8px; border: 0; background: transparent; color: var(--muted);
-  cursor: pointer; font: inherit; font-size: 13px;
+  border: 0; background: transparent; color: var(--muted);
+  cursor: pointer; font: inherit; font-size: 13px; padding: 0;
 }
 .save:hover { color: var(--text); }
 
@@ -149,6 +162,13 @@ select, input, textarea {
 .btn.ghost { background: var(--bg); color: var(--text); border: 1px solid var(--border); }
 .btn.full { width: 100%; }
 .btn:disabled { opacity: 0.45; cursor: default; }
+.btn.icon-stop {
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  background: var(--accent);
+  border-radius: 3px;
+}
 
 .error { color: var(--error); padding: 0 8vw 8px; margin: 0; font-size: 13px; }
 
