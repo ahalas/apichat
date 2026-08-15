@@ -2,12 +2,20 @@
 
 from __future__ import annotations
 
-import json
-from typing import Iterator
+from collections.abc import Callable
+from typing import Any, Iterator
 
 import httpx
 
 from app.providers.base import OPENROUTER_EFFORT, OPENROUTER_FALLBACK_MODELS, ModelInfo, parse_api_error
+from app.providers.messages import (
+    chat_annotation_urls,
+    chat_delta_text,
+    format_sources,
+    iter_sse_json,
+    stream_error_message,
+    to_chat_messages,
+)
 
 BASE_URL = "https://openrouter.ai/api/v1"
 
@@ -88,14 +96,26 @@ class OpenRouterClient:
     def stream_chat(
         self,
         model: str,
-        messages: list[dict[str, str]],
+        messages: list[dict[str, Any]],
         effort: str | None = None,
         supports_reasoning: bool = False,
+        *,
+        web_search: bool = False,
+        on_status: Callable[[str], None] | None = None,
     ) -> Iterator[str]:
-        body: dict = {"model": model, "messages": messages, "stream": True}
+        converted = to_chat_messages(messages, include_pdf_parts=True)
+        body: dict[str, Any] = {"model": model, "messages": converted, "stream": True}
         if effort and supports_reasoning and effort != "none":
             body["reasoning"] = {"effort": effort}
+        if web_search:
+            body["tools"] = [{"type": "openrouter:web_search"}]
+            if on_status:
+                on_status("Searching the web…")
+                yield ""
+        if any(_has_pdf_part(msg) for msg in converted):
+            body["plugins"] = [{"id": "file-parser"}]
 
+        sources: list[str] = []
         with httpx.Client(timeout=None) as client:
             with client.stream(
                 "POST",
@@ -104,22 +124,33 @@ class OpenRouterClient:
                 json=body,
             ) as response:
                 if response.status_code >= 400:
-                    body_text = response.read().decode("utf-8", errors="replace")
-                    raise RuntimeError(body_text[:400] or f"HTTP {response.status_code}")
-                for line in response.iter_lines():
-                    if not line or not line.startswith("data: "):
-                        continue
-                    payload = line[6:].strip()
-                    if payload == "[DONE]":
-                        break
-                    try:
-                        chunk = json.loads(payload)
-                    except json.JSONDecodeError:
-                        continue
-                    choices = chunk.get("choices") or []
-                    if not choices:
-                        continue
-                    delta = choices[0].get("delta") or {}
-                    content = delta.get("content")
-                    if content:
-                        yield content
+                    raise RuntimeError(stream_error_message(response)[:400] or f"HTTP {response.status_code}")
+                for chunk in iter_sse_json(response):
+                    sources.extend(chat_annotation_urls(chunk))
+                    token = chat_delta_text(chunk)
+                    if token:
+                        yield token
+                    elif _tool_call_name(chunk) and on_status:
+                        on_status("Searching the web…")
+        extra = format_sources(sources)
+        if extra:
+            yield extra
+
+
+def _has_pdf_part(message: dict[str, Any]) -> bool:
+    content = message.get("content")
+    if not isinstance(content, list):
+        return False
+    return any(part.get("type") == "file" for part in content if isinstance(part, dict))
+
+
+def _tool_call_name(chunk: dict[str, Any]) -> str:
+    choices = chunk.get("choices") or []
+    if not choices:
+        return ""
+    delta = choices[0].get("delta") or {}
+    tool_calls = delta.get("tool_calls") or []
+    if not tool_calls:
+        return ""
+    fn = (tool_calls[0] or {}).get("function") or {}
+    return str(fn.get("name") or "")

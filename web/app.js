@@ -18,6 +18,7 @@ const state = {
   disabled: { xAI: [], OpenRouter: [] },
   cache: {},
   chats: [],
+  pendingFiles: [],
 };
 
 let thinkingTimer = null;
@@ -134,7 +135,7 @@ function attachmentHtml(atts) {
       if ((att.mime || "").startsWith("video/")) {
         return `<div class="media"><video controls src="${src}"></video></div>`;
       }
-      return `<div class="media">${escapeHtml(att.filename)}</div>`;
+      return `<div class="file-chip">${escapeHtml(att.filename || "file")}</div>`;
     })
     .join("");
 }
@@ -147,10 +148,13 @@ function addMessage(role, content, attachments = [], { streaming = false } = {})
   who.textContent = role === "user" ? "You" : "Assistant";
   wrap.appendChild(who);
   if (role === "user") {
-    const bubble = document.createElement("div");
-    bubble.className = "bubble";
-    bubble.textContent = content;
-    wrap.appendChild(bubble);
+    if (content) {
+      const bubble = document.createElement("div");
+      bubble.className = "bubble";
+      bubble.textContent = content;
+      wrap.appendChild(bubble);
+    }
+    wrap.insertAdjacentHTML("beforeend", attachmentHtml(attachments));
   } else {
     const md = document.createElement("div");
     md.className = "md";
@@ -247,6 +251,8 @@ async function newChat() {
   });
   state.conversationId = conv.id;
   state.cache[conv.id] = { conversation: conv, messages: [] };
+  state.pendingFiles = [];
+  renderPendingFiles();
   $("messages").innerHTML = "";
   showEmpty(true);
   setError("");
@@ -270,6 +276,14 @@ function updateEffort() {
   const mode = currentMode();
   $("effortWrap").hidden = mode !== "Chat";
   $("durationWrap").hidden = mode !== "Video";
+  const chatTools = mode === "Chat";
+  $("attachBtn").hidden = !chatTools;
+  $("webSearchBtn").hidden = !chatTools;
+  if (!chatTools) {
+    $("webSearchBtn").classList.remove("active");
+    state.pendingFiles = [];
+    renderPendingFiles();
+  }
   const info = state.models.find((m) => m.id === $("model").value);
   const effort = $("effort");
   if (info?.supports_reasoning && info.reasoning_efforts?.length) {
@@ -298,10 +312,13 @@ async function sendMessage(ev) {
   ev?.preventDefault();
   if (state.sending) return;
   const text = $("input").value.trim();
-  if (!text) return;
+  const attachments = state.pendingFiles.slice();
+  if (!text && !attachments.length) return;
   setError("");
   $("input").value = "";
-  addMessage("user", text);
+  state.pendingFiles = [];
+  renderPendingFiles();
+  addMessage("user", text, attachments);
   const wrap = addMessage("assistant", "", [], { streaming: true });
   state.sending = true;
   $("sendBtn").disabled = true;
@@ -317,6 +334,8 @@ async function sendMessage(ev) {
     mode: currentMode(),
     effort: $("effort").value,
     duration: Number($("duration").value),
+    attachments,
+    web_search: $("webSearchBtn").classList.contains("active"),
   };
 
   try {
@@ -341,6 +360,14 @@ async function sendMessage(ev) {
         const event = JSON.parse(line.slice(6));
         if (event.type === "meta") {
           state.conversationId = event.conversation_id;
+        } else if (event.type === "status") {
+          if (thinkingTimer) {
+            clearInterval(thinkingTimer);
+            thinkingTimer = null;
+          }
+          const el = $("status");
+          el.hidden = false;
+          el.textContent = event.text;
         } else if (event.type === "token") {
           if (streamBuffer === "") stopThinking();
           streamBuffer += event.text;
@@ -471,6 +498,82 @@ async function saveSettings() {
   await refreshModels();
 }
 
+function guessMime(name, fallback = "application/octet-stream") {
+  const ext = (name.split(".").pop() || "").toLowerCase();
+  return (
+    {
+      png: "image/png",
+      jpg: "image/jpeg",
+      jpeg: "image/jpeg",
+      gif: "image/gif",
+      webp: "image/webp",
+      pdf: "application/pdf",
+      txt: "text/plain",
+      md: "text/markdown",
+      csv: "text/csv",
+      json: "application/json",
+    }[ext] || fallback
+  );
+}
+
+function readFileAsAttachment(file) {
+  return new Promise((resolve, reject) => {
+    if (file.size > 20 * 1024 * 1024) {
+      reject(new Error(`${file.name} is larger than 20 MB.`));
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = String(reader.result || "");
+      const comma = result.indexOf(",");
+      resolve({
+        filename: file.name,
+        mime: file.type || guessMime(file.name),
+        data_base64: comma >= 0 ? result.slice(comma + 1) : result,
+      });
+    };
+    reader.onerror = () => reject(new Error(`Could not read ${file.name}`));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function addPendingFiles(fileList) {
+  const files = [...fileList];
+  if (!files.length) return;
+  try {
+    for (const file of files) {
+      if (state.pendingFiles.length >= 10) {
+        setError("Too many attachments (max 10).");
+        break;
+      }
+      const att = await readFileAsAttachment(file);
+      state.pendingFiles.push(att);
+    }
+    renderPendingFiles();
+  } catch (err) {
+    setError(err.message);
+  }
+}
+
+function renderPendingFiles() {
+  const box = $("attachPreview");
+  if (!state.pendingFiles.length) {
+    box.hidden = true;
+    box.innerHTML = "";
+    return;
+  }
+  box.hidden = false;
+  box.innerHTML = state.pendingFiles
+    .map((att, i) => {
+      const isImage = (att.mime || "").startsWith("image/");
+      const thumb = isImage
+        ? `<img src="data:${att.mime};base64,${att.data_base64}" alt="" />`
+        : "";
+      return `<div class="attach-chip">${thumb}<span class="name">${escapeHtml(att.filename)}</span><button type="button" class="remove" data-i="${i}" aria-label="Remove">×</button></div>`;
+    })
+    .join("");
+}
+
 function bind() {
   $("modes").onclick = (e) => {
     const btn = e.target.closest("button");
@@ -488,6 +591,35 @@ function bind() {
   $("model").onchange = updateEffort;
   $("newChat").onclick = newChat;
   $("composer").onsubmit = sendMessage;
+  $("attachBtn").onclick = () => $("fileInput").click();
+  $("fileInput").onchange = (e) => {
+    addPendingFiles(e.target.files);
+    e.target.value = "";
+  };
+  $("webSearchBtn").onclick = () => $("webSearchBtn").classList.toggle("active");
+  $("attachPreview").onclick = (e) => {
+    const btn = e.target.closest(".remove");
+    if (!btn) return;
+    state.pendingFiles.splice(Number(btn.dataset.i), 1);
+    renderPendingFiles();
+  };
+  const composer = $("composer");
+  composer.addEventListener("dragover", (e) => {
+    e.preventDefault();
+    composer.classList.add("dragover");
+  });
+  composer.addEventListener("dragleave", () => composer.classList.remove("dragover"));
+  composer.addEventListener("drop", (e) => {
+    e.preventDefault();
+    composer.classList.remove("dragover");
+    if (currentMode() === "Chat") addPendingFiles(e.dataTransfer.files);
+  });
+  $("input").addEventListener("paste", (e) => {
+    const files = [...(e.clipboardData?.files || [])];
+    if (!files.length || currentMode() !== "Chat") return;
+    e.preventDefault();
+    addPendingFiles(files);
+  });
   $("input").addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
