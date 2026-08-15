@@ -13,6 +13,7 @@ const THINKING_PHRASES = [
 const state = {
   conversationId: null,
   sending: false,
+  streamId: null,
   models: [],
   menuId: null,
   disabled: { xAI: [], OpenRouter: [] },
@@ -22,6 +23,10 @@ const state = {
 };
 
 let thinkingTimer = null;
+let streamTimer = null;
+let streamBuffer = "";
+let streamWrap = null;
+let streamOriginId = null;
 
 const $ = (id) => document.getElementById(id);
 
@@ -87,11 +92,28 @@ function showEmpty(show) {
   $("emptyState").classList.toggle("hidden", !show);
 }
 
+function viewingStream() {
+  if (!state.sending) return false;
+  if (state.streamId) return state.conversationId === state.streamId;
+  return state.conversationId === streamOriginId;
+}
+
 function renderTranscript(messages) {
   $("messages").innerHTML = "";
-  showEmpty(!messages?.length);
-  for (const msg of messages || []) {
+  const list = messages || [];
+  const skipTail =
+    viewingStream() &&
+    list.length &&
+    list[list.length - 1].role === "assistant" &&
+    !list[list.length - 1].content;
+  const shown = skipTail ? list.slice(0, -1) : list;
+  showEmpty(!shown.length && !viewingStream());
+  for (const msg of shown) {
     addMessage(msg.role, msg.content, msg.attachments || []);
+  }
+  if (viewingStream()) {
+    streamWrap = addMessage("assistant", streamBuffer, [], { streaming: true });
+    if (streamBuffer) updateStreaming(streamWrap, streamBuffer);
   }
 }
 
@@ -241,9 +263,9 @@ function applyConversationControls(conv) {
 }
 
 async function loadConversation(id) {
-  if (state.sending) return;
   state.conversationId = id;
   selectSidebar(id);
+  updateStreamChrome();
   const cached = state.cache[id];
   if (cached) {
     renderTranscript(cached.messages);
@@ -254,6 +276,7 @@ async function loadConversation(id) {
   state.cache[id] = data;
   renderTranscript(data.messages);
   applyConversationControls(data.conversation);
+  updateStreamChrome();
 }
 
 async function newChat() {
@@ -276,10 +299,10 @@ function resetWorkspace({ keepId = false } = {}) {
   state.pendingFiles = [];
   renderPendingFiles();
   $("messages").innerHTML = "";
+  streamWrap = null;
   showEmpty(true);
   setError("");
-  stopThinking();
-  updateComposerReady();
+  updateStreamChrome();
 }
 
 async function refreshModels() {
@@ -339,6 +362,22 @@ function updateComposerReady() {
   }
 }
 
+function updateStreamChrome() {
+  $("stopBtn").hidden = !state.sending;
+  if (viewingStream()) {
+    if (!streamBuffer && state.sending && !thinkingTimer) startThinking();
+  } else if (thinkingTimer || !$("status").hidden) {
+    const el = $("status");
+    el.hidden = true;
+    el.textContent = "";
+    if (thinkingTimer) {
+      clearInterval(thinkingTimer);
+      thinkingTimer = null;
+    }
+  }
+  updateComposerReady();
+}
+
 function applyEffort(value) {
   updateEffort();
   if (value && value !== "—") {
@@ -347,8 +386,16 @@ function applyEffort(value) {
   }
 }
 
-let streamTimer = null;
-let streamBuffer = "";
+function paintStream() {
+  if (!viewingStream() || !streamWrap?.isConnected) return;
+  updateStreaming(streamWrap, streamBuffer);
+}
+
+function finishStreamView(content, attachments = []) {
+  if (streamWrap?.isConnected) streamWrap.remove();
+  streamWrap = null;
+  if (content || attachments.length) addMessage("assistant", content, attachments);
+}
 
 async function sendMessage(ev) {
   ev?.preventDefault();
@@ -361,12 +408,12 @@ async function sendMessage(ev) {
   state.pendingFiles = [];
   renderPendingFiles();
   addMessage("user", text, attachments);
-  const wrap = addMessage("assistant", "", [], { streaming: true });
+  streamWrap = addMessage("assistant", "", [], { streaming: true });
+  streamOriginId = state.conversationId;
+  state.streamId = state.conversationId;
   state.sending = true;
-  $("stopBtn").hidden = false;
-  updateComposerReady();
   streamBuffer = "";
-  startThinking();
+  updateStreamChrome();
 
   const body = {
     conversation_id: state.conversationId,
@@ -408,8 +455,14 @@ async function sendMessage(ev) {
         if (!line) continue;
         const event = JSON.parse(line.slice(6));
         if (event.type === "meta") {
-          state.conversationId = event.conversation_id;
+          state.streamId = event.conversation_id;
+          if (state.conversationId === streamOriginId) {
+            state.conversationId = event.conversation_id;
+            selectSidebar(event.conversation_id);
+          }
+          if (state.cache[event.conversation_id]) delete state.cache[event.conversation_id];
         } else if (event.type === "status") {
+          if (!viewingStream()) continue;
           if (thinkingTimer) {
             clearInterval(thinkingTimer);
             thinkingTimer = null;
@@ -422,27 +475,29 @@ async function sendMessage(ev) {
           streamBuffer += event.text;
           if (!streamTimer) {
             streamTimer = setTimeout(() => {
-              updateStreaming(wrap, streamBuffer);
+              paintStream();
               streamTimer = null;
             }, 50);
           }
         } else if (event.type === "media") {
           stopThinking();
-          wrap.remove();
-          addMessage("assistant", event.content, event.attachments || []);
+          if (viewingStream()) finishStreamView(event.content, event.attachments || []);
+          else if (state.streamId) delete state.cache[state.streamId];
         } else if (event.type === "error") {
           stopThinking();
-          if (!streamBuffer) wrap.remove();
-          setError(event.message);
+          if (viewingStream() && !streamBuffer) finishStreamView("");
+          if (viewingStream() || !state.conversationId) setError(event.message);
         } else if (event.type === "done") {
           stopThinking();
           if (streamTimer) {
             clearTimeout(streamTimer);
             streamTimer = null;
           }
-          if (streamBuffer) {
-            wrap.remove();
-            addMessage("assistant", streamBuffer, event.attachments || []);
+          if (viewingStream()) {
+            if (streamBuffer) finishStreamView(streamBuffer, event.attachments || []);
+            else if (streamWrap?.isConnected) streamWrap.remove();
+          } else if (state.streamId) {
+            delete state.cache[state.streamId];
           }
           refreshChats(state.conversationId);
         }
@@ -450,13 +505,16 @@ async function sendMessage(ev) {
     }
   } catch (err) {
     stopThinking();
-    if (!streamBuffer) wrap.remove();
-    setError(err.message);
+    if (viewingStream() && !streamBuffer) finishStreamView("");
+    if (viewingStream() || !state.conversationId) setError(err.message);
   } finally {
     stopThinking();
     state.sending = false;
-    $("stopBtn").hidden = true;
-    updateComposerReady();
+    state.streamId = null;
+    streamOriginId = null;
+    streamWrap = null;
+    streamBuffer = "";
+    updateStreamChrome();
   }
 }
 
@@ -706,8 +764,9 @@ function bind() {
     }
   });
   $("stopBtn").onclick = () => {
-    stopThinking();
-    if (state.conversationId) api(`/api/stop/${state.conversationId}`, { method: "POST" });
+    const id = state.streamId || state.conversationId;
+    if (id) api(`/api/stop/${id}`, { method: "POST" });
+    if (viewingStream()) stopThinking();
   };
   $("emptySettings").onclick = openSettings;
   $("settingsBtn").onclick = openSettings;
@@ -746,6 +805,7 @@ async function deleteChat(id) {
   }
   delete state.cache[id];
   state.menuId = null;
+  if (state.streamId === id) api(`/api/stop/${id}`, { method: "POST" });
   const wasCurrent = state.conversationId === id;
   if (wasCurrent) state.conversationId = null;
   await refreshChats();
