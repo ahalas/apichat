@@ -78,31 +78,37 @@
   <div id="overlay" class="overlay" hidden>
     <div class="modal">
       <h2>Settings</h2>
-      <section>
-        <h3>API keys</h3>
-        <label>xAI API key
-          <input id="xaiKey" type="password" placeholder="Leave blank to keep existing key" />
-        </label>
-        <button type="button" class="btn ghost" id="testXai">Test xAI connection</button>
-        <p class="hint" id="xaiStatus"></p>
+      <section class="key-card">
+        <div class="key-head">
+          <h3>xAI</h3>
+          <p class="hint" id="xaiStatus">No key</p>
+        </div>
+        <input id="xaiKey" type="password" placeholder="Paste API key" />
+        <div class="key-actions">
+          <button type="button" class="btn ghost" id="clearXai" disabled>Clear</button>
+          <button type="button" class="btn ghost" id="testXai">Test</button>
+        </div>
         <div class="model-list" id="xaiModels"></div>
-
-        <label>OpenRouter API key
-          <input id="orKey" type="password" placeholder="Leave blank to keep existing key" />
-        </label>
-        <button type="button" class="btn ghost" id="testOr">Test OpenRouter connection</button>
-        <p class="hint" id="orStatus"></p>
+      </section>
+      <section class="key-card">
+        <div class="key-head">
+          <h3>OpenRouter</h3>
+          <p class="hint" id="orStatus">No key</p>
+        </div>
+        <input id="orKey" type="password" placeholder="Paste API key" />
+        <div class="key-actions">
+          <button type="button" class="btn ghost" id="clearOr" disabled>Clear</button>
+          <button type="button" class="btn ghost" id="testOr">Test</button>
+        </div>
         <div class="model-list" id="orModels"></div>
       </section>
-      <section>
-        <h3>File output</h3>
-        <label>Save folder
-          <div class="row">
-            <input id="folder" />
-            <button type="button" class="btn ghost" id="browseFolder">Browse</button>
-          </div>
-        </label>
-        <button type="button" class="btn ghost" id="openFolder">Open folder</button>
+      <section class="key-card">
+        <h3>Save folder</h3>
+        <div class="row">
+          <input id="folder" />
+          <button type="button" class="btn ghost" id="browseFolder">Browse</button>
+          <button type="button" class="btn ghost" id="openFolder">Open</button>
+        </div>
       </section>
       <div class="modal-actions">
         <button type="button" class="btn ghost" id="cancelSettings">Cancel</button>

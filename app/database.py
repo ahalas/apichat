@@ -175,6 +175,10 @@ class Database:
                 ),
             )
 
+    def delete_message(self, message_id: str) -> None:
+        with self._connect() as conn:
+            conn.execute("DELETE FROM messages WHERE id = ?", (message_id,))
+
     def delete_conversation(self, conversation_id: str) -> None:
         with self._connect() as conn:
             conn.execute("DELETE FROM messages WHERE conversation_id = ?", (conversation_id,))

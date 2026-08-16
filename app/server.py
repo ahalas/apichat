@@ -36,6 +36,12 @@ class ConfigUpdate(BaseModel):
     openrouter_api_key: str | None = None
     output_folder: str | None = None
     disabled_models: dict | None = None
+    clear_xai_api_key: bool = False
+    clear_openrouter_api_key: bool = False
+
+
+class ConversationUpdate(BaseModel):
+    title: str
 
 
 class NewConversation(BaseModel):
@@ -60,6 +66,7 @@ class SendPayload(BaseModel):
     duration: int = 8
     attachments: list[AttachmentIn] = Field(default_factory=list)
     web_search: bool = False
+    replace_last: bool = False
 
 
 class SavePayload(BaseModel):
@@ -110,7 +117,12 @@ def create_app() -> FastAPI:
             updates["output_folder"] = folder
         if payload.disabled_models is not None:
             updates["disabled_models"] = payload.disabled_models
-        save_config(merge_config(cfg, updates))
+        cfg = merge_config(cfg, updates)
+        if payload.clear_xai_api_key:
+            cfg.xai_api_key = ""
+        if payload.clear_openrouter_api_key:
+            cfg.openrouter_api_key = ""
+        save_config(cfg)
         return get_config()
 
     @app.post("/api/test/{provider}")
@@ -165,6 +177,18 @@ def create_app() -> FastAPI:
     @app.post("/api/conversations")
     def create_conversation(payload: NewConversation) -> dict[str, Any]:
         conv = db.create_conversation(provider=payload.provider, model=payload.model, effort=payload.effort)
+        return asdict(conv)
+
+    @app.patch("/api/conversations/{conversation_id}")
+    def patch_conversation(conversation_id: str, payload: ConversationUpdate) -> dict[str, Any]:
+        conv = db.get_conversation(conversation_id)
+        if not conv:
+            raise HTTPException(404, "Conversation not found")
+        title = payload.title.strip()
+        if not title:
+            raise HTTPException(400, "Title is required")
+        db.update_conversation(conversation_id, title=title[:80])
+        conv = db.get_conversation(conversation_id)
         return asdict(conv)
 
     @app.delete("/api/conversations/{conversation_id}")
@@ -300,7 +324,18 @@ def _send_events(payload: SendPayload, user_attachments: list[dict[str, Any]]):
         title = seed[:48] + ("…" if len(seed) > 48 else "")
         db.update_conversation(conv_id, title=title)
     db.update_conversation(conv_id, provider=provider, model=payload.model, effort=payload.effort or conv.effort)
-    db.add_message(conv_id, "user", text, user_attachments)
+    if payload.replace_last:
+        existing = db.list_messages(conv_id)
+        last_assistant = existing[-1] if existing and existing[-1].role == "assistant" else None
+        last_user = next((m for m in reversed(existing) if m.role == "user"), None)
+        if last_assistant:
+            db.delete_message(last_assistant.id)
+        if last_user:
+            db.update_message_content(last_user.id, text, user_attachments)
+        else:
+            db.add_message(conv_id, "user", text, user_attachments)
+    else:
+        db.add_message(conv_id, "user", text, user_attachments)
     assistant = db.add_message(conv_id, "assistant", "")
     yield _sse(
         {

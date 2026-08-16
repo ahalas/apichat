@@ -57,7 +57,10 @@ select, input, textarea {
 .chat-row { position: relative; }
 .chat-item {
   width: 100%; text-align: left; border: 0; background: transparent;
-  padding: 10px 36px 10px 12px; border-radius: 12px; cursor: pointer; font: inherit;
+  padding: 10px 56px 10px 12px; border-radius: 12px; cursor: pointer; font: inherit;
+}
+.chat-item .title-input {
+  width: 100%; font: inherit; font-size: 14px; padding: 2px 6px; border-radius: 8px;
 }
 .chat-item .title { display: block; font-size: 14px; padding-right: 4px; }
 .chat-item .date { display: block; font-size: 12px; color: var(--muted); margin-top: 2px; }
@@ -68,10 +71,28 @@ select, input, textarea {
   background: transparent; color: var(--muted); cursor: pointer; font: inherit;
   line-height: 1; opacity: 0;
 }
-.chat-row:hover .chat-delete, .chat-item.active + .chat-delete, .chat-delete:focus {
+.chat-row:hover .chat-delete, .chat-row.active-row .chat-delete, .chat-delete:focus {
   opacity: 1;
 }
 .chat-delete:hover { background: #d4d4d8; color: var(--text); }
+.busy-dots {
+  position: absolute; right: 32px; top: 50%; width: 16px; height: 16px;
+  margin-top: -8px; display: none; pointer-events: none;
+}
+.chat-row.busy .busy-dots { display: block; animation: busy-spin 0.9s linear infinite; }
+.busy-dots span {
+  position: absolute; left: 50%; top: 50%; width: 3px; height: 3px;
+  margin: -1.5px 0 0 -1.5px; border-radius: 50%; background: #16a34a;
+}
+.busy-dots span:nth-child(1) { transform: rotate(0deg) translateY(-6px); }
+.busy-dots span:nth-child(2) { transform: rotate(45deg) translateY(-6px); }
+.busy-dots span:nth-child(3) { transform: rotate(90deg) translateY(-6px); }
+.busy-dots span:nth-child(4) { transform: rotate(135deg) translateY(-6px); }
+.busy-dots span:nth-child(5) { transform: rotate(180deg) translateY(-6px); }
+.busy-dots span:nth-child(6) { transform: rotate(225deg) translateY(-6px); }
+.busy-dots span:nth-child(7) { transform: rotate(270deg) translateY(-6px); }
+.busy-dots span:nth-child(8) { transform: rotate(315deg) translateY(-6px); }
+@keyframes busy-spin { to { transform: rotate(360deg); } }
 
 .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 .transcript { flex: 1; min-height: 0; position: relative; display: flex; flex-direction: column; }
@@ -186,18 +207,25 @@ select, input, textarea {
   position: fixed; inset: 0; background: rgba(0,0,0,.28); display: flex; align-items: center; justify-content: center; z-index: 30;
 }
 .modal {
-  background: #fff; width: min(640px, 92vw); max-height: 86vh; overflow: auto;
+  background: #fff; width: min(560px, 92vw); max-height: 86vh; overflow: auto;
   border-radius: 16px; padding: 22px 24px;
 }
-.modal h2 { margin: 0 0 12px; }
-.modal h3 { margin: 18px 0 8px; font-size: 15px; }
-.modal label { display: block; font-size: 13px; color: var(--muted); margin: 10px 0; }
+.modal h2 { margin: 0 0 16px; }
+.modal h3 { margin: 0; font-size: 15px; color: var(--text); }
 .modal input[type="text"],
-.modal input[type="password"] { width: 100%; margin-top: 6px; }
-.row { display: flex; gap: 8px; }
+.modal input[type="password"] { width: 100%; }
+.key-card {
+  border: 1px solid var(--border); border-radius: 14px; padding: 14px; margin: 0 0 12px;
+}
+.key-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+.key-actions { display: flex; gap: 8px; margin: 10px 0 0; }
+.row { display: flex; gap: 8px; align-items: center; }
 .row input { flex: 1; }
-.hint { font-size: 12px; color: var(--muted); min-height: 1.2em; }
-.model-list { max-height: 180px; overflow: auto; border: 1px solid var(--border); border-radius: 10px; padding: 6px 8px; margin: 8px 0 14px; }
+.hint { font-size: 12px; color: var(--muted); min-height: 1.2em; margin: 0; }
+.hint.ok { color: #15803d; }
+.hint.err { color: var(--error); }
+.model-list { max-height: 140px; overflow: auto; border: 1px solid var(--border); border-radius: 10px; padding: 6px 8px; margin: 10px 0 0; }
+.model-list:empty { display: none; }
 .model-list label {
   display: flex;
   align-items: flex-start;
