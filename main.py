@@ -5,12 +5,26 @@ from __future__ import annotations
 import socket
 import threading
 import time
+import urllib.parse
 import urllib.request
+import webbrowser
 
 import uvicorn
 import webview
 
 from app.server import app
+
+webview.settings["OPEN_EXTERNAL_LINKS_IN_BROWSER"] = True
+
+
+def _open_external_url(url: str) -> None:
+    if not isinstance(url, str):
+        return
+    url = url.strip()
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme not in {"http", "https", "mailto"}:
+        return
+    webbrowser.open(url)
 
 
 class JsApi:
@@ -24,6 +38,9 @@ class JsApi:
         if result:
             return result[0]
         return ""
+
+    def open_url(self, url: str) -> None:
+        _open_external_url(url)
 
 
 def _free_port() -> int:
@@ -54,7 +71,7 @@ def main() -> None:
     thread.start()
     url = f"http://127.0.0.1:{port}/"
     _wait_for_server(url)
-    webview.create_window(
+    window = webview.create_window(
         "Apichat",
         url,
         width=1440,
@@ -63,6 +80,19 @@ def main() -> None:
         js_api=JsApi(),
         text_select=True,
     )
+
+    def on_loaded() -> None:
+        current = window.get_current_url() or ""
+        parsed = urllib.parse.urlparse(current)
+        host = (parsed.hostname or "").lower()
+        if host in {"127.0.0.1", "localhost"} and parsed.port == port:
+            return
+        if parsed.scheme not in {"http", "https"}:
+            return
+        _open_external_url(current)
+        window.load_url(url)
+
+    window.events.loaded += on_loaded
     webview.start()
 
 
