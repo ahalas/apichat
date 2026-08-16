@@ -50,21 +50,14 @@ function isExternalHref(href) {
   }
 }
 
-function openExternalUrl(href) {
-  if (window.pywebview?.api?.open_url) {
-    window.pywebview.api.open_url(href);
-    return;
-  }
-  window.open(href, "_blank", "noopener,noreferrer");
-}
-
 function onExternalLinkActivate(e) {
   if (e.type === "auxclick" && e.button !== 1) return;
   const anchor = e.target.closest("a[href]");
   if (!anchor || !isExternalHref(anchor.getAttribute("href"))) return;
+  if (!window.pywebview?.api?.open_url) return;
   e.preventDefault();
   e.stopPropagation();
-  openExternalUrl(anchor.href);
+  window.pywebview.api.open_url(anchor.href);
 }
 
 if (window.DOMPurify) {
