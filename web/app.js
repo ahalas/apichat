@@ -37,7 +37,43 @@ function escapeHtml(text) {
 
 function renderMarkdown(text) {
   const html = marked.parse(text || "", { breaks: true });
-  return DOMPurify.sanitize(html);
+  return DOMPurify.sanitize(html, { ADD_ATTR: ["target", "rel"] });
+}
+
+function isExternalHref(href) {
+  if (!href || href.startsWith("#")) return false;
+  try {
+    const url = new URL(href, window.location.href);
+    return url.protocol === "http:" || url.protocol === "https:" || url.protocol === "mailto:";
+  } catch {
+    return false;
+  }
+}
+
+function openExternalUrl(href) {
+  if (window.pywebview?.api?.open_url) {
+    window.pywebview.api.open_url(href);
+    return;
+  }
+  window.open(href, "_blank", "noopener,noreferrer");
+}
+
+function onExternalLinkActivate(e) {
+  if (e.type === "auxclick" && e.button !== 1) return;
+  const anchor = e.target.closest("a[href]");
+  if (!anchor || !isExternalHref(anchor.getAttribute("href"))) return;
+  e.preventDefault();
+  e.stopPropagation();
+  openExternalUrl(anchor.href);
+}
+
+if (window.DOMPurify) {
+  DOMPurify.addHook("afterSanitizeAttributes", (node) => {
+    if (node.tagName === "A" && node.hasAttribute("href")) {
+      node.setAttribute("target", "_blank");
+      node.setAttribute("rel", "noopener noreferrer");
+    }
+  });
 }
 
 function formatDate(iso) {
@@ -988,6 +1024,8 @@ function bind() {
     if (e.target.closest("#menu")) return;
     $("menu").hidden = true;
   });
+  document.addEventListener("click", onExternalLinkActivate, true);
+  document.addEventListener("auxclick", onExternalLinkActivate, true);
 }
 
 async function deleteChat(id) {
