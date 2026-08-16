@@ -78,6 +78,7 @@ def main() -> None:
         height=920,
         min_size=(1100, 700),
         js_api=JsApi(),
+        text_select=True,
     )
 
     def on_loaded() -> None:
