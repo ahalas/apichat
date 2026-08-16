@@ -12,16 +12,18 @@ const THINKING_PHRASES = [
 
 const state = {
   conversationId: null,
-  sending: false,
   models: [],
   menuId: null,
   disabled: { xAI: [], OpenRouter: [] },
   cache: {},
   chats: [],
   pendingFiles: [],
+  replaceLast: false,
+  lastUser: null,
 };
 
-let thinkingTimer = null;
+const streams = new Map();
+let streamSeq = 0;
 
 const $ = (id) => document.getElementById(id);
 
@@ -87,42 +89,101 @@ function showEmpty(show) {
   $("emptyState").classList.toggle("hidden", !show);
 }
 
+function streamForView() {
+  for (const job of streams.values()) {
+    if (job.id && job.id === state.conversationId) return job;
+    if (!job.id && job.originId === state.conversationId) return job;
+  }
+  return null;
+}
+
+function viewingJob(job) {
+  if (!job) return false;
+  if (job.id) return state.conversationId === job.id;
+  return state.conversationId === job.originId;
+}
+
+function lastUserWrap() {
+  const nodes = [...$("messages").querySelectorAll(".msg.user")];
+  return nodes[nodes.length - 1] || null;
+}
+
+function attachThinking(job, userWrap = lastUserWrap()) {
+  stopJobThinking(job);
+  if (!userWrap) return;
+  const el = document.createElement("div");
+  el.className = "thinking";
+  userWrap.appendChild(el);
+  job.thinkingEl = el;
+  let i = Math.floor(Math.random() * THINKING_PHRASES.length);
+  const tick = () => {
+    if (job.thinkingEl) job.thinkingEl.textContent = `${THINKING_PHRASES[i % THINKING_PHRASES.length]}…`;
+    i += 1;
+  };
+  tick();
+  job.thinkingTimer = setInterval(tick, 1200);
+}
+
+function stopJobThinking(job) {
+  if (!job) return;
+  if (job.thinkingTimer) {
+    clearInterval(job.thinkingTimer);
+    job.thinkingTimer = null;
+  }
+  if (job.thinkingEl) {
+    job.thinkingEl.remove();
+    job.thinkingEl = null;
+  }
+}
+
+function setJobStatus(job, text) {
+  if (job.thinkingTimer) {
+    clearInterval(job.thinkingTimer);
+    job.thinkingTimer = null;
+  }
+  if (!job.thinkingEl && viewingJob(job)) {
+    const userWrap = lastUserWrap();
+    if (!userWrap) return;
+    job.thinkingEl = document.createElement("div");
+    job.thinkingEl.className = "thinking";
+    userWrap.appendChild(job.thinkingEl);
+  }
+  if (job.thinkingEl) job.thinkingEl.textContent = text;
+}
+
 function renderTranscript(messages) {
   $("messages").innerHTML = "";
-  showEmpty(!messages?.length);
-  for (const msg of messages || []) {
+  const job = streamForView();
+  const list = messages || [];
+  const skipTail =
+    job &&
+    list.length &&
+    list[list.length - 1].role === "assistant" &&
+    !list[list.length - 1].content;
+  const shown = skipTail ? list.slice(0, -1) : list;
+  showEmpty(!shown.length && !job);
+  for (const msg of shown) {
     addMessage(msg.role, msg.content, msg.attachments || []);
+  }
+  if (!job) {
+    decorateLastUser();
+    return;
+  }
+  if (job.buffer) {
+    job.wrap = addMessage("assistant", job.buffer, [], { streaming: true });
+    updateStreaming(job.wrap, job.buffer);
+  } else {
+    attachThinking(job);
   }
 }
 
 function selectSidebar(id) {
   for (const row of $("chatList").children) {
-    const btn = row.matches(".chat-item") ? row : row.querySelector(".chat-item");
-    btn?.classList.toggle("active", btn.dataset.id === id);
+    const btn = row.querySelector(".chat-item");
+    const on = btn?.dataset.id === id;
+    btn?.classList.toggle("active", on);
+    row.classList.toggle("active-row", on);
   }
-}
-
-function startThinking() {
-  stopThinking();
-  const el = $("status");
-  let i = Math.floor(Math.random() * THINKING_PHRASES.length);
-  const tick = () => {
-    el.hidden = false;
-    el.textContent = `${THINKING_PHRASES[i % THINKING_PHRASES.length]}…`;
-    i += 1;
-  };
-  tick();
-  thinkingTimer = setInterval(tick, 1200);
-}
-
-function stopThinking() {
-  if (thinkingTimer) {
-    clearInterval(thinkingTimer);
-    thinkingTimer = null;
-  }
-  const el = $("status");
-  el.hidden = true;
-  el.textContent = "";
 }
 
 function attachmentHtml(atts) {
@@ -185,14 +246,22 @@ function paintChats(conversations, selectId = state.conversationId) {
   nav.innerHTML = "";
   for (const conv of state.chats) {
     const row = document.createElement("div");
-    row.className = "chat-row";
-    const btn = document.createElement("button");
+    row.className = "chat-row" + (conv.id === selectId ? " active-row" : "");
+    const btn = document.createElement("div");
     btn.className = "chat-item" + (conv.id === selectId ? " active" : "");
+    btn.tabIndex = 0;
     btn.dataset.id = conv.id;
     btn.innerHTML = `<span class="title">${escapeHtml(conv.title)}</span><span class="date">${formatDate(conv.updated_at)}</span>`;
     btn.onclick = (e) => {
+      if (e.detail > 1) return;
       if (e.button && e.button !== 0) return;
+      if (e.target.closest(".title-input")) return;
       loadConversation(conv.id);
+    };
+    btn.querySelector(".title").ondblclick = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      startRename(conv, btn.querySelector(".title"));
     };
     btn.oncontextmenu = (e) => {
       e.preventDefault();
@@ -214,10 +283,80 @@ function paintChats(conversations, selectId = state.conversationId) {
       e.stopPropagation();
       deleteChat(conv.id);
     };
+    const dots = document.createElement("span");
+    dots.className = "busy-dots";
+    dots.setAttribute("aria-hidden", "true");
+    dots.innerHTML = "<span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span>";
     row.appendChild(btn);
+    row.appendChild(dots);
     row.appendChild(del);
     nav.appendChild(row);
   }
+  markBusyChats();
+}
+
+function busyIds() {
+  const ids = new Set();
+  for (const job of streams.values()) {
+    if (job.id) ids.add(job.id);
+    if (job.originId) ids.add(job.originId);
+  }
+  return ids;
+}
+
+function markBusyChats() {
+  const ids = busyIds();
+  for (const row of $("chatList").children) {
+    const btn = row.querySelector(".chat-item");
+    row.classList.toggle("busy", ids.has(btn?.dataset.id));
+  }
+}
+
+function startRename(conv, titleEl) {
+  if (!titleEl || titleEl.tagName === "INPUT") return;
+  const input = document.createElement("input");
+  input.className = "title-input";
+  input.value = conv.title;
+  titleEl.replaceWith(input);
+  input.focus();
+  input.select();
+  let done = false;
+  const finish = async (save) => {
+    if (done) return;
+    done = true;
+    const next = input.value.trim();
+    if (save && next && next !== conv.title) {
+      try {
+        const updated = await api(`/api/conversations/${conv.id}`, {
+          method: "PATCH",
+          body: JSON.stringify({ title: next }),
+        });
+        conv.title = updated.title;
+        if (state.cache[conv.id]?.conversation) state.cache[conv.id].conversation.title = updated.title;
+      } catch (err) {
+        setError(err.message);
+      }
+    }
+    const span = document.createElement("span");
+    span.className = "title";
+    span.textContent = conv.title;
+    span.ondblclick = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      startRename(conv, span);
+    };
+    if (input.isConnected) input.replaceWith(span);
+  };
+  input.onkeydown = (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      finish(true);
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      finish(false);
+    }
+  };
+  input.onblur = () => finish(true);
 }
 
 async function refreshChats(selectId = state.conversationId) {
@@ -241,9 +380,9 @@ function applyConversationControls(conv) {
 }
 
 async function loadConversation(id) {
-  if (state.sending) return;
   state.conversationId = id;
   selectSidebar(id);
+  updateStreamChrome();
   const cached = state.cache[id];
   if (cached) {
     renderTranscript(cached.messages);
@@ -252,8 +391,11 @@ async function loadConversation(id) {
   const data = await api(`/api/conversations/${id}/messages`);
   if (state.conversationId !== id) return;
   state.cache[id] = data;
+  const last = [...(data.messages || [])].reverse().find((m) => m.role === "user");
+  state.lastUser = last ? { text: last.content || "", attachments: last.attachments || [] } : null;
   renderTranscript(data.messages);
   applyConversationControls(data.conversation);
+  updateStreamChrome();
 }
 
 async function newChat() {
@@ -278,8 +420,7 @@ function resetWorkspace({ keepId = false } = {}) {
   $("messages").innerHTML = "";
   showEmpty(true);
   setError("");
-  stopThinking();
-  updateComposerReady();
+  updateStreamChrome();
 }
 
 async function refreshModels() {
@@ -325,7 +466,7 @@ function updateEffort() {
 
 function updateComposerReady() {
   const hasModels = state.models.length > 0;
-  $("sendBtn").disabled = !hasModels || state.sending;
+  $("sendBtn").disabled = !hasModels || Boolean(streamForView());
   $("input").placeholder = hasModels ? "Message…" : "Add an API key in Settings…";
   const emptySub = $("emptySub");
   const emptySettings = $("emptySettings");
@@ -339,6 +480,12 @@ function updateComposerReady() {
   }
 }
 
+function updateStreamChrome() {
+  $("stopBtn").hidden = !streamForView();
+  markBusyChats();
+  updateComposerReady();
+}
+
 function applyEffort(value) {
   updateEffort();
   if (value && value !== "—") {
@@ -347,26 +494,60 @@ function applyEffort(value) {
   }
 }
 
-let streamTimer = null;
-let streamBuffer = "";
+function paintJob(job) {
+  if (!viewingJob(job) || !job.wrap?.isConnected) return;
+  updateStreaming(job.wrap, job.buffer);
+}
+
+function finishJobView(job, content, attachments = []) {
+  stopJobThinking(job);
+  if (job.wrap?.isConnected) job.wrap.remove();
+  job.wrap = null;
+  if (content || attachments.length) addMessage("assistant", content, attachments);
+  decorateLastUser();
+}
 
 async function sendMessage(ev) {
   ev?.preventDefault();
-  if (state.sending) return;
+  if (streamForView()) return;
   const text = $("input").value.trim();
   const attachments = state.pendingFiles.slice();
   if (!text && !attachments.length) return;
+  const replaceLast = state.replaceLast;
+  state.replaceLast = false;
   setError("");
   $("input").value = "";
   state.pendingFiles = [];
   renderPendingFiles();
-  addMessage("user", text, attachments);
-  const wrap = addMessage("assistant", "", [], { streaming: true });
-  state.sending = true;
-  $("stopBtn").hidden = false;
-  updateComposerReady();
-  streamBuffer = "";
-  startThinking();
+  state.lastUser = { text, attachments: attachments.slice() };
+  let userWrap;
+  if (replaceLast) {
+    userWrap = lastUserWrap();
+    if (userWrap) {
+      const bubble = userWrap.querySelector(".bubble");
+      if (bubble) bubble.textContent = text;
+      userWrap.querySelectorAll(".file-chip, .media, .save-actions").forEach((el) => el.remove());
+      if (attachments.length) userWrap.insertAdjacentHTML("beforeend", attachmentHtml(attachments));
+    } else {
+      userWrap = addMessage("user", text, attachments);
+    }
+    [...$("messages").querySelectorAll(".msg.assistant")].pop()?.remove();
+  } else {
+    userWrap = addMessage("user", text, attachments);
+  }
+  const job = {
+    key: `s${++streamSeq}`,
+    originId: state.conversationId,
+    id: state.conversationId,
+    buffer: "",
+    wrap: null,
+    thinkingEl: null,
+    thinkingTimer: null,
+    paintTimer: null,
+  };
+  streams.set(job.key, job);
+  attachThinking(job, userWrap);
+  updateStreamChrome();
 
   const body = {
     conversation_id: state.conversationId,
@@ -378,6 +559,7 @@ async function sendMessage(ev) {
     duration: Number($("duration").value),
     attachments,
     web_search: $("webSearchBtn").classList.contains("active"),
+    replace_last: replaceLast,
   };
 
   try {
@@ -408,82 +590,132 @@ async function sendMessage(ev) {
         if (!line) continue;
         const event = JSON.parse(line.slice(6));
         if (event.type === "meta") {
-          state.conversationId = event.conversation_id;
-        } else if (event.type === "status") {
-          if (thinkingTimer) {
-            clearInterval(thinkingTimer);
-            thinkingTimer = null;
+          job.id = event.conversation_id;
+          if (state.conversationId === job.originId) {
+            state.conversationId = job.id;
+            selectSidebar(job.id);
           }
-          const el = $("status");
-          el.hidden = false;
-          el.textContent = event.text;
+          if (state.cache[job.id]) delete state.cache[job.id];
+          markBusyChats();
+        } else if (event.type === "status") {
+          if (viewingJob(job)) setJobStatus(job, event.text);
         } else if (event.type === "token") {
-          if (streamBuffer === "") stopThinking();
-          streamBuffer += event.text;
-          if (!streamTimer) {
-            streamTimer = setTimeout(() => {
-              updateStreaming(wrap, streamBuffer);
-              streamTimer = null;
+          if (job.buffer === "") stopJobThinking(job);
+          job.buffer += event.text;
+          if (viewingJob(job) && !job.wrap?.isConnected) {
+            job.wrap = addMessage("assistant", job.buffer, [], { streaming: true });
+          }
+          if (!job.paintTimer) {
+            job.paintTimer = setTimeout(() => {
+              paintJob(job);
+              job.paintTimer = null;
             }, 50);
           }
         } else if (event.type === "media") {
-          stopThinking();
-          wrap.remove();
-          addMessage("assistant", event.content, event.attachments || []);
+          if (viewingJob(job)) finishJobView(job, event.content, event.attachments || []);
+          else if (job.id) delete state.cache[job.id];
         } else if (event.type === "error") {
-          stopThinking();
-          if (!streamBuffer) wrap.remove();
-          setError(event.message);
+          if (viewingJob(job) && !job.buffer) finishJobView(job, "");
+          if (viewingJob(job)) setError(event.message);
         } else if (event.type === "done") {
-          stopThinking();
-          if (streamTimer) {
-            clearTimeout(streamTimer);
-            streamTimer = null;
+          if (job.paintTimer) {
+            clearTimeout(job.paintTimer);
+            job.paintTimer = null;
           }
-          if (streamBuffer) {
-            wrap.remove();
-            addMessage("assistant", streamBuffer, event.attachments || []);
+          if (viewingJob(job)) {
+            if (job.buffer) finishJobView(job, job.buffer, event.attachments || []);
+            else finishJobView(job, "");
+          } else if (job.id) {
+            delete state.cache[job.id];
           }
           refreshChats(state.conversationId);
         }
       }
     }
   } catch (err) {
-    stopThinking();
-    if (!streamBuffer) wrap.remove();
-    setError(err.message);
+    if (viewingJob(job) && !job.buffer) finishJobView(job, "");
+    if (viewingJob(job)) setError(err.message);
   } finally {
-    stopThinking();
-    state.sending = false;
-    $("stopBtn").hidden = true;
-    updateComposerReady();
+    if (job.paintTimer) clearTimeout(job.paintTimer);
+    stopJobThinking(job);
+    streams.delete(job.key);
+    updateStreamChrome();
   }
+}
+
+function addAction(actions, label, onclick) {
+  const btn = document.createElement("button");
+  btn.className = "save";
+  btn.textContent = label;
+  btn.onclick = onclick;
+  actions.appendChild(btn);
 }
 
 function appendSaveActions(wrap, content, attachments = []) {
   const actions = document.createElement("div");
   actions.className = "save-actions";
+  addAction(actions, "Copy", () => copyText(wrap.querySelector(".md")?.dataset.raw || content || ""));
+  addAction(actions, "Retry", () => retryLast());
   if (attachments?.length) {
-    const save = document.createElement("button");
-    save.className = "save";
-    save.textContent = "Save file";
-    save.onclick = () => saveMessage(content, attachments);
-    actions.appendChild(save);
+    addAction(actions, "Save file", () => saveMessage(content, attachments));
   } else if (content) {
-    const txt = document.createElement("button");
-    txt.className = "save";
-    txt.textContent = "Save as text";
-    txt.onclick = () => saveMessage(content, [], "txt");
-    const pdf = document.createElement("button");
-    pdf.className = "save";
-    pdf.textContent = "Save as PDF";
-    pdf.onclick = () => saveMessage(content, [], "pdf");
-    actions.appendChild(txt);
-    actions.appendChild(pdf);
-  } else {
-    return;
+    addAction(actions, "Save as text", () => saveMessage(content, [], "txt"));
+    addAction(actions, "Save as PDF", () => saveMessage(content, [], "pdf"));
   }
   wrap.appendChild(actions);
+}
+
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand("copy");
+    ta.remove();
+  }
+}
+
+function lastUserPayload() {
+  const msgs = state.cache[state.conversationId]?.messages || [];
+  for (let i = msgs.length - 1; i >= 0; i -= 1) {
+    if (msgs[i].role === "user") {
+      return { text: msgs[i].content || "", attachments: msgs[i].attachments || [] };
+    }
+  }
+  if (state.lastUser) return { text: state.lastUser.text, attachments: state.lastUser.attachments.slice() };
+  const wrap = lastUserWrap();
+  return { text: wrap?.querySelector(".bubble")?.textContent || "", attachments: [] };
+}
+
+function decorateLastUser() {
+  $("messages").querySelectorAll(".msg.user .edit-prompt").forEach((el) => el.remove());
+  const wrap = lastUserWrap();
+  if (!wrap || streamForView()) return;
+  const actions = document.createElement("div");
+  actions.className = "save-actions edit-prompt";
+  addAction(actions, "Edit", () => {
+    const payload = lastUserPayload();
+    $("input").value = payload.text;
+    state.pendingFiles = payload.attachments.slice();
+    renderPendingFiles();
+    state.replaceLast = true;
+    $("input").focus();
+  });
+  wrap.appendChild(actions);
+}
+
+async function retryLast() {
+  if (streamForView()) return;
+  const payload = lastUserPayload();
+  if (!payload.text && !payload.attachments.length) return;
+  $("input").value = payload.text;
+  state.pendingFiles = payload.attachments.slice();
+  renderPendingFiles();
+  state.replaceLast = true;
+  await sendMessage();
 }
 
 async function saveMessage(content, attachments, format = "txt") {
@@ -523,14 +755,25 @@ function collectDisabled(container) {
     .map((el) => el.dataset.id);
 }
 
+function applyKeyCard(provider, cfg) {
+  const saved = provider === "xAI" ? cfg.xai_api_key_set : cfg.openrouter_api_key_set;
+  const status = provider === "xAI" ? $("xaiStatus") : $("orStatus");
+  const clear = provider === "xAI" ? $("clearXai") : $("clearOr");
+  const list = provider === "xAI" ? $("xaiModels") : $("orModels");
+  const input = provider === "xAI" ? $("xaiKey") : $("orKey");
+  status.textContent = saved ? "Key saved" : "No key";
+  status.className = saved ? "hint ok" : "hint";
+  clear.disabled = !saved;
+  input.value = "";
+  if (!saved) list.innerHTML = "";
+}
+
 async function openSettings() {
   const cfg = await api("/api/config");
   $("folder").value = cfg.output_folder;
   state.disabled = cfg.disabled_models || { xAI: [], OpenRouter: [] };
-  $("xaiStatus").textContent = cfg.xai_api_key_set ? "xAI key is saved" : "";
-  $("orStatus").textContent = cfg.openrouter_api_key_set ? "OpenRouter key is saved" : "";
-  $("xaiKey").value = "";
-  $("orKey").value = "";
+  applyKeyCard("xAI", cfg);
+  applyKeyCard("OpenRouter", cfg);
   if (cfg.xai_api_key_set) {
     const data = await api("/api/models?provider=xAI&include_all=true");
     renderChecks($("xaiModels"), data.models, "xAI");
@@ -553,8 +796,18 @@ async function testProvider(provider) {
   const status = provider === "xAI" ? $("xaiStatus") : $("orStatus");
   const list = provider === "xAI" ? $("xaiModels") : $("orModels");
   status.textContent = result.message;
-  status.style.color = result.ok ? "#15803d" : "#b91c1c";
-  if (result.ok) renderChecks(list, result.models, provider);
+  status.className = result.ok ? "hint ok" : "hint err";
+  if (result.ok) {
+    renderChecks(list, result.models, provider);
+    (provider === "xAI" ? $("clearXai") : $("clearOr")).disabled = false;
+  }
+}
+
+async function clearKey(provider) {
+  const body = provider === "xAI" ? { clear_xai_api_key: true } : { clear_openrouter_api_key: true };
+  const cfg = await api("/api/config", { method: "PUT", body: JSON.stringify(body) });
+  applyKeyCard(provider, cfg);
+  await refreshModels();
 }
 
 async function saveSettings() {
@@ -706,8 +959,9 @@ function bind() {
     }
   });
   $("stopBtn").onclick = () => {
-    stopThinking();
-    if (state.conversationId) api(`/api/stop/${state.conversationId}`, { method: "POST" });
+    const job = streamForView();
+    const id = job?.id || job?.originId;
+    if (id) api(`/api/stop/${id}`, { method: "POST" });
   };
   $("emptySettings").onclick = openSettings;
   $("settingsBtn").onclick = openSettings;
@@ -715,6 +969,8 @@ function bind() {
   $("saveSettings").onclick = saveSettings;
   $("testXai").onclick = () => testProvider("xAI");
   $("testOr").onclick = () => testProvider("OpenRouter");
+  $("clearXai").onclick = () => clearKey("xAI");
+  $("clearOr").onclick = () => clearKey("OpenRouter");
   $("openFolder").onclick = () => api("/api/open-folder", { method: "POST" });
   $("browseFolder").onclick = async () => {
     if (window.pywebview?.api?.browse_folder) {
@@ -746,6 +1002,9 @@ async function deleteChat(id) {
   }
   delete state.cache[id];
   state.menuId = null;
+  for (const job of streams.values()) {
+    if (job.id === id || job.originId === id) api(`/api/stop/${id}`, { method: "POST" });
+  }
   const wasCurrent = state.conversationId === id;
   if (wasCurrent) state.conversationId = null;
   await refreshChats();
