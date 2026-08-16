@@ -13,6 +13,7 @@
 }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 html, body { height: 100%; margin: 0; }
 body {
   font-family: var(--font);
@@ -184,7 +185,6 @@ select, input, textarea {
 .overlay {
   position: fixed; inset: 0; background: rgba(0,0,0,.28); display: flex; align-items: center; justify-content: center; z-index: 30;
 }
-.overlay[hidden], .menu[hidden], .error[hidden] { display: none !important; }
 .modal {
   background: #fff; width: min(640px, 92vw); max-height: 86vh; overflow: auto;
   border-radius: 16px; padding: 22px 24px;
