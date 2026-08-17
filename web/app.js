@@ -467,7 +467,7 @@ async function refreshModels() {
 
 function updateEffort() {
   const mode = currentMode();
-  $("providerWrap").hidden = mode !== "Chat";
+  $("providerWrap").hidden = false;
   $("effortWrap").hidden = mode !== "Chat";
   $("durationWrap").hidden = mode !== "Video";
   const chatTools = mode === "Chat";
@@ -940,13 +940,9 @@ function bind() {
     const btn = e.target.closest("button");
     if (!btn) return;
     [...$("modes").children].forEach((b) => b.classList.toggle("active", b === btn));
-    if (btn.dataset.mode !== "Chat") $("provider").value = "xAI";
     refreshModels();
   };
   $("provider").onchange = () => {
-    if ($("provider").value === "OpenRouter") {
-      [...$("modes").children].forEach((b) => b.classList.toggle("active", b.dataset.mode === "Chat"));
-    }
     refreshModels();
   };
   $("model").onchange = updateEffort;

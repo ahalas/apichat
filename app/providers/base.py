@@ -34,6 +34,12 @@ OPENROUTER_FALLBACK_MODELS = [
     "anthropic/claude-sonnet-4",
     "openai/gpt-4o-mini",
 ]
+OPENROUTER_FALLBACK_IMAGE_MODELS = [
+    "openai/gpt-image-1",
+]
+OPENROUTER_FALLBACK_VIDEO_MODELS = [
+    "google/veo-3.1",
+]
 
 
 @dataclass
