@@ -321,10 +321,30 @@ def chat_delta_text(chunk: dict[str, Any]) -> str:
     if not choices:
         return ""
     delta = choices[0].get("delta") or {}
-    content = delta.get("content")
+    return _content_to_text(delta.get("content"))
+
+
+def _content_to_text(content: Any) -> str:
     if isinstance(content, str):
         return content
-    return ""
+    if not isinstance(content, list):
+        return ""
+    parts: list[str] = []
+    for item in content:
+        if isinstance(item, str):
+            parts.append(item)
+            continue
+        if not isinstance(item, dict):
+            continue
+        kind = str(item.get("type") or "")
+        if kind in {"text", "output_text"} and item.get("text"):
+            parts.append(str(item["text"]))
+        elif kind == "image_url":
+            image = item.get("image_url") or {}
+            url = image.get("url") if isinstance(image, dict) else image
+            if isinstance(url, str) and url:
+                parts.append(f"\n![]({url})\n")
+    return "".join(parts)
 
 
 def chat_annotation_urls(chunk: dict[str, Any]) -> list[str]:

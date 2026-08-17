@@ -152,8 +152,6 @@ def create_app() -> FastAPI:
             disabled = set(cfg.disabled_for(provider))
             models = [m for m in models if m.id not in disabled]
             kind = mode.lower()
-            if provider == "OpenRouter":
-                kind = "chat"
             models = [m for m in models if m.kind == kind]
         return {"models": [_model_dict(m) for m in models]}
 
@@ -296,7 +294,6 @@ def _send_events(payload: SendPayload, user_attachments: list[dict[str, Any]]):
     text = payload.text.strip()
     web_search = bool(payload.web_search) and mode == "Chat"
     if mode in {"Image", "Video"}:
-        provider = "xAI"
         user_attachments = []
         web_search = False
     if provider == "xAI" and not cfg.xai_api_key:
@@ -357,7 +354,10 @@ def _send_events(payload: SendPayload, user_attachments: list[dict[str, Any]]):
 
     try:
         if mode == "Image":
-            att = XAIClient(cfg.xai_api_key).generate_image(text, payload.model)
+            if provider == "OpenRouter":
+                att = OpenRouterClient(cfg.openrouter_api_key).generate_image(text, payload.model)
+            else:
+                att = XAIClient(cfg.xai_api_key).generate_image(text, payload.model)
             attachments = attachments_to_json([att])
             content = "Image generated."
             db.update_message_content(assistant.id, content, attachments)
@@ -369,9 +369,14 @@ def _send_events(payload: SendPayload, user_attachments: list[dict[str, Any]]):
                 def is_set(self_inner) -> bool:
                     return bool(_stop_flags.get(conv_id))
 
-            att = XAIClient(cfg.xai_api_key).generate_video(
-                text, payload.model, duration=payload.duration, stop_event=Flag()
-            )
+            if provider == "OpenRouter":
+                att = OpenRouterClient(cfg.openrouter_api_key).generate_video(
+                    text, payload.model, duration=payload.duration, stop_event=Flag()
+                )
+            else:
+                att = XAIClient(cfg.xai_api_key).generate_video(
+                    text, payload.model, duration=payload.duration, stop_event=Flag()
+                )
             attachments = attachments_to_json([att])
             content = "Video generated."
             db.update_message_content(assistant.id, content, attachments)

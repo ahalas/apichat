@@ -5,8 +5,8 @@ A desktop chat app for **xAI** and **OpenRouter**, using your own API keys. The 
 ## Features
 
 - Streaming chat with markdown replies
-- Image and video generation (xAI Imagine)
-- File attachments and web search
+- Image and video generation (xAI Imagine, or OpenRouter image/video models)
+- File attachments and web search (including OpenRouter web search and PDF parsing)
 - Word/Excel converted to text or CSV on send
 - Model and reasoning effort selection
 - Local chat history
